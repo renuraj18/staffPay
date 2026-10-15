@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Upload a biometric attendance workbook and calculate monthly staff salary",
+  "repository": "github:renuraj18/staffPay",
   "main": "server.js",
   "bin": "server.js",
   "scripts": {
