@@ -1,7 +1,7 @@
 {
   "name": "staffpay",
   "productName": "StaffPay",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Upload a biometric attendance workbook and calculate monthly staff salary",
   "repository": "github:renuraj18/staffPay",
