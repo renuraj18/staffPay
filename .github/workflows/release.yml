@@ -1,0 +1,58 @@
+name: Release
+
+# Push a version tag (npm version patch && git push --follow-tags) to build the
+# Windows installer and publish it as the latest GitHub release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+      - name: Check tag matches package.json version
+        shell: bash
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$PKG" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG"; exit 1
+          fi
+
+      - name: Build StaffPay.exe
+        run: npm run build:exe
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $version = node -p "require('./package.json').version"
+          & $iscc "/DAppVersion=$version" installer\StaffPay.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item dist\StaffPay.exe portable\
+          Copy-Item "installer\Create Desktop Shortcut.cmd" portable\
+          Compress-Archive -Path portable\* -DestinationPath dist\StaffPay-Portable.zip -Force
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/StaffPay-Setup.exe
+            dist/StaffPay-Portable.zip

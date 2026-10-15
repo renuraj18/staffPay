@@ -1,0 +1,13 @@
+node_modules/
+dist/
+portable/
+
+# Runtime data: real staff names and salaries — never commit
+data/*
+!data/.gitkeep
+
+# Previous version kept locally for reference
+_old_version/
+
+.DS_Store
+*.tmp

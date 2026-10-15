@@ -1,0 +1,32 @@
+{
+  "name": "staffpay",
+  "productName": "StaffPay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Upload a biometric attendance workbook and calculate monthly staff salary",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test tests/*.test.js",
+    "build:exe": "pkg . --targets node22-win-x64 --output dist/StaffPay.exe"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*"
+    ],
+    "outputPath": "dist"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.23.0"
+  }
+}

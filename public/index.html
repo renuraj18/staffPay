@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StaffPay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- ================= Sidebar ================= -->
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">₹</span><span>StaffPay</span></div>
+      <nav class="nav" id="nav">
+        <button data-tab="salary">
+          <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18"/><path d="M16 15h2"/></svg>
+          <span>Salary</span>
+        </button>
+        <button data-tab="staff">
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/></svg>
+          <span>Staff</span><span class="badge" id="staff-count"></span>
+        </button>
+        <button data-tab="shifts">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+          <span>Shifts</span><span class="badge" id="shift-count"></span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+      <a class="update-card hidden" id="update-card" target="_blank" rel="noopener">
+        <div class="eyebrow">Update available</div>
+        <div class="update-title" id="update-title"></div>
+        <div class="update-link">Download installer →</div>
+      </a>
+      <div class="sheet-card hidden" id="sheet-card">
+        <div class="eyebrow">Current sheet</div>
+        <div class="sheet-company" id="sheet-company"></div>
+        <div class="sheet-period" id="sheet-period"></div>
+        <div class="sheet-file" id="sheet-file"></div>
+        <button class="btn ghost block" id="btn-new">
+          <svg viewBox="0 0 24 24"><path d="M12 16V5"/><path d="m7 10 5-5 5 5"/><path d="M5 19h14"/></svg>
+          Upload new sheet
+        </button>
+      </div>
+      <div class="version" id="version"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- ================= Salary ================= -->
+      <section id="tab-salary" class="tab">
+        <header class="page-head">
+          <div>
+            <h1>Salary</h1>
+            <p class="sub" id="salary-sub">Upload the biometric attendance sheet to calculate salary.</p>
+          </div>
+          <div class="head-actions hidden" id="salary-actions">
+            <button class="btn mobile-only" id="btn-new-mobile">
+              <svg viewBox="0 0 24 24"><path d="M12 16V5"/><path d="m7 10 5-5 5 5"/><path d="M5 19h14"/></svg>
+              Upload
+            </button>
+            <button class="btn" id="btn-rules">
+              <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+              Salary rules
+            </button>
+            <a class="btn primary" href="/api/export.xlsx">
+              <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+              Download Excel
+            </a>
+          </div>
+        </header>
+
+        <div id="upload-view" class="hidden">
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="file" accept=".xlsx,.xlsm,.xls" hidden>
+            <div class="drop-icon">
+              <svg viewBox="0 0 24 24"><path d="M12 16V5"/><path d="m7 10 5-5 5 5"/><path d="M5 19h14"/></svg>
+            </div>
+            <h2>Drop your attendance sheet here</h2>
+            <p>Biometric <b>Daily Details Report</b> (.xlsx) — one worksheet per employee.</p>
+            <span class="btn primary">Choose file</span>
+            <div class="progress hidden" id="progress"><span class="spinner"></span> Reading workbook…</div>
+          </label>
+          <p class="error-msg hidden" id="upload-error"></p>
+          <p class="center hidden" id="cancel-upload"><button class="btn ghost" id="btn-cancel">← Back to current report</button></p>
+        </div>
+
+        <div id="report-view" class="hidden">
+          <div class="warnings hidden" id="warnings"></div>
+          <div class="stats" id="stats"></div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Employees</h2>
+              <span class="muted small">Click a row for day-by-day attendance</span>
+            </div>
+            <div class="table-wrap">
+              <table class="table" id="salary-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Shift</th>
+                    <th class="num">Monthly</th>
+                    <th class="num" title="Present + Late days">Worked</th>
+                    <th class="num">Half</th>
+                    <th class="num" title="Full absences (excess beyond allowance in brackets)">Absent</th>
+                    <th class="num">Off</th>
+                    <th class="num">Late</th>
+                    <th class="num" title="Missing Clock In or Clock Out">Missing</th>
+                    <th class="num">Deduction</th>
+                    <th class="num">Fines</th>
+                    <th class="num">Net salary</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+                <tfoot></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= Staff ================= -->
+      <section id="tab-staff" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Staff</h1>
+            <p class="sub">Enter each employee's monthly salary and shift. Daily rate = monthly ÷ <span data-divisor>30.5</span>. Leave blank to use the default monthly salary. Changes save automatically.</p>
+          </div>
+          <span class="saved" data-saved></span>
+        </header>
+        <div class="panel">
+          <div class="toolbar" id="staff-toolbar">
+            <div class="segmented" id="staff-filter"></div>
+            <div class="bulk">
+              <span class="muted small" id="selected-count">0 selected</span>
+              <select class="input" id="bulk-shift" aria-label="Shift for selected staff"></select>
+              <button class="btn" id="btn-bulk-shift" disabled>Move to shift</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="staff-table">
+              <thead>
+                <tr>
+                  <th class="check"><input type="checkbox" id="check-all" aria-label="Select all"></th>
+                  <th>Employee</th>
+                  <th>Shift</th>
+                  <th class="num" title="Leave blank to use the default monthly salary (Salary rules)">Monthly salary (₹)</th>
+                  <th class="num">Daily rate</th>
+                  <th class="num">Net (this sheet)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="empty hidden" id="staff-empty">Upload an attendance sheet on the Salary page to list your staff here.</p>
+        </div>
+      </section>
+
+      <!-- ================= Shifts ================= -->
+      <section id="tab-shifts" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Shifts</h1>
+            <p class="sub">Group staff into shift buckets. Clock In after login + grace is late. Early leave is not marked.</p>
+          </div>
+          <div class="head-actions">
+            <span class="saved" data-saved></span>
+            <button class="btn primary" id="btn-add-shift">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Add shift
+            </button>
+          </div>
+        </header>
+        <div class="shift-grid" id="shift-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ================= Rules drawer ================= -->
+  <div class="drawer-backdrop hidden" id="drawer-backdrop"></div>
+  <aside class="drawer" id="rules-drawer" aria-hidden="true" aria-label="Salary rules">
+    <div class="drawer-head">
+      <div>
+        <h2>Salary rules</h2>
+        <span class="saved" data-saved></span>
+      </div>
+      <button class="icon-btn" id="btn-close-rules" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <form id="rules-form" class="form">
+      <div class="form-group">
+        <div class="group-title">Base pay</div>
+        <label>Default monthly salary (₹)<input class="input" name="monthly_salary" data-key="rule:monthly_salary" type="number" min="0" step="1"></label>
+        <label>Daily rate divisor<input class="input" name="salary_divisor" data-key="rule:salary_divisor" type="number" min="1" step="0.5"><span class="hint">Daily rate = monthly ÷ this</span></label>
+      </div>
+      <div class="form-group">
+        <div class="group-title">Working days</div>
+        <label class="check-row"><input type="checkbox" name="weekends_working" data-key="rule:weekends_working">
+          <span>Saturday &amp; Sunday are working days<span class="hint">Device "Week Off" is ignored; no punches = absent</span></span></label>
+        <label>Sunday finishes at<input class="input" name="sunday_logout_time" data-key="rule:sunday_logout_time" type="time"><span class="hint">Leaving from this time on Sunday is a full day — no half day deduction</span></label>
+      </div>
+      <div class="form-group">
+        <div class="group-title">Attendance</div>
+        <label>Paid absences per month<input class="input" name="allowed_absences" data-key="rule:allowed_absences" type="number" min="0" step="1"></label>
+        <label>Half day deduction (days)<input class="input" name="half_day_deduction" data-key="rule:half_day_deduction" type="number" min="0" max="1" step="0.25"></label>
+      </div>
+      <div class="form-group">
+        <div class="group-title">Fines (₹ each)</div>
+        <label>Late arrival<input class="input" name="late_fine" data-key="rule:late_fine" type="number" min="0" step="1"></label>
+        <label>Missing punch<input class="input" name="missing_punch_fine" data-key="rule:missing_punch_fine" type="number" min="0" step="1"></label>
+      </div>
+    </form>
+    <p class="hint pad">Default monthly salary applies to staff with no salary entered. Late arrival uses each employee's shift login time. Early leave is not marked.</p>
+  </aside>
+
+  <div class="toast hidden" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
