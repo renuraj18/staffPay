@@ -219,3 +219,12 @@ test('unrecognised status is flagged for review', () => {
   assert.equal(r.employees[0].days[0].unknown, true);
   assert.ok(r.warnings.some(w => w.includes('On Duty(OD)')));
 });
+
+test('Leave (LE) is an absence without punches and a workday with them', () => {
+  const leave = classifyDay(day('', '', 'Leave(LE)'), DEFAULT_RULES);
+  assert.equal(leave.absent, 1);
+  assert.equal(leave.unknown, false);
+  const worked = classifyDay(day('09:20', '19:40', 'Leave(LE)'), DEFAULT_RULES);
+  assert.equal(worked.absent, 0);
+  assert.equal(worked.paid, 1);
+});

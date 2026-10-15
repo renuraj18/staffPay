@@ -5,7 +5,8 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { exec } = require('child_process');
-const { DEFAULT_RULES, normalizeSettings, parseWorkbook, calculatePayroll } = require('./lib/payroll');
+const { DEFAULT_RULES, normalizeSettings, parseWorkbook, parseSheets, calculatePayroll } = require('./lib/payroll');
+const { pdfToSheets } = require('./lib/pdf');
 const { buildWorkbook } = require('./lib/export');
 const { versionInfo } = require('./lib/update');
 const pkg = require('./package.json');
@@ -110,14 +111,15 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Choose an attendance workbook' });
-  if (!/\.(xlsx|xlsm|xls)$/i.test(req.file.originalname)) return res.status(400).json({ error: 'Upload an Excel file (.xlsx, .xls)' });
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Choose an attendance sheet' });
+  const pdf = /\.pdf$/i.test(req.file.originalname);
+  if (!pdf && !/\.(xlsx|xlsm|xls)$/i.test(req.file.originalname)) return res.status(400).json({ error: 'Upload an Excel (.xlsx, .xls) or PDF file' });
   let parsed;
-  try { parsed = parseWorkbook(req.file.buffer); } catch (e) {
-    return res.status(400).json({ error: `Could not read workbook: ${e.message}` });
+  try { parsed = pdf ? parseSheets(await pdfToSheets(req.file.buffer)) : parseWorkbook(req.file.buffer); } catch (e) {
+    return res.status(400).json({ error: `Could not read ${pdf ? 'PDF' : 'workbook'}: ${e.message || e}` });
   }
-  if (!parsed.employees.length) return res.status(400).json({ error: 'No employee attendance found in this workbook', warnings: parsed.warnings });
+  if (!parsed.employees.length) return res.status(400).json({ error: `No employee attendance found in this ${pdf ? 'PDF' : 'workbook'}`, warnings: parsed.warnings });
   writeJson(UPLOAD_FILE, { file: req.file.originalname, uploaded_at: new Date().toISOString(), parsed });
   const settings = registerStaff(loadSettings(), parsed);
   writeJson(SETTINGS_FILE, settings);

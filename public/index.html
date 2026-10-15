@@ -74,14 +74,14 @@
 
         <div id="upload-view" class="hidden">
           <label class="dropzone" id="dropzone">
-            <input type="file" id="file" accept=".xlsx,.xlsm,.xls" hidden>
+            <input type="file" id="file" accept=".xlsx,.xlsm,.xls,.pdf" hidden>
             <div class="drop-icon">
               <svg viewBox="0 0 24 24"><path d="M12 16V5"/><path d="m7 10 5-5 5 5"/><path d="M5 19h14"/></svg>
             </div>
             <h2>Drop your attendance sheet here</h2>
-            <p>Biometric <b>Daily Details Report</b> (.xlsx) — one worksheet per employee.</p>
+            <p>Biometric attendance report as <b>Excel</b> (.xlsx, .xls) or <b>PDF</b> — one employee per sheet or page.</p>
             <span class="btn primary">Choose file</span>
-            <div class="progress hidden" id="progress"><span class="spinner"></span> Reading workbook…</div>
+            <div class="progress hidden" id="progress"><span class="spinner"></span> Reading sheet…</div>
           </label>
           <p class="error-msg hidden" id="upload-error"></p>
           <p class="center hidden" id="cancel-upload"><button class="btn ghost" id="btn-cancel">← Back to current report</button></p>

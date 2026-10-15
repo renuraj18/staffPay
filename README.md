@@ -1,6 +1,6 @@
 # StaffPay — attendance sheet to salary
 
-Upload the biometric **Daily Details Report** workbook (one worksheet per employee) and the app extracts every day's punches and status, then calculates each employee's monthly salary. Results can be downloaded as an Excel workbook (Salary Summary, Daily Attendance, Assumptions).
+Upload the biometric attendance report — the **Daily Details Report** Excel workbook (one worksheet per employee) or the **Daily Attendance Report (Detailed Report)** PDF (one page per employee) — and the app extracts every day's punches and status, then calculates each employee's monthly salary. Results can be downloaded as an Excel workbook (Salary Summary, Daily Attendance, Assumptions).
 
 ## Install on Windows
 1. Download **[StaffPay-Setup.exe](../../releases/latest/download/StaffPay-Setup.exe)** from the latest release (no admin rights needed).
@@ -26,7 +26,7 @@ Requires Node.js 20+.
 - **Release:** on `main`, run `npm version patch` (or `minor` / `major`) — this bumps `package.json` and creates a `vX.Y.Z` tag — then `git push --follow-tags`. The **Release** workflow builds `StaffPay.exe`, the installer and the portable zip on Windows and publishes them as the latest GitHub release. The download links above always point at the newest release.
 
 ## Tabs
-- **Salary** — upload the sheet, see each employee's salary and day-by-day attendance, download Excel. Fines, allowances and the default salary are under **Salary rules**.
+- **Salary** — upload the sheet (Excel or PDF), see each employee's salary and day-by-day attendance, download Excel. Fines, allowances and the default salary are under **Salary rules**.
 - **Staff** — enter each employee's monthly salary and shift; select several staff to move them to a shift together.
 - **Shifts** — create shift buckets with login time, logout time and grace minutes (press Save on the card).
 
