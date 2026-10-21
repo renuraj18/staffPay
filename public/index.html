@@ -19,13 +19,25 @@
           <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18"/><path d="M16 15h2"/></svg>
           <span>Salary</span>
         </button>
+        <button data-tab="rules">
+          <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+          <span>Salary rules</span>
+        </button>
         <button data-tab="staff">
           <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/></svg>
           <span>Staff</span><span class="badge" id="staff-count"></span>
         </button>
+        <button data-tab="companies">
+          <svg viewBox="0 0 24 24"><path d="M4 20V6.5L11 4v16"/><path d="M11 9h9v11"/><path d="M3 20h18"/><path d="M7 9h.01M7 12.5h.01M7 16h.01M14.5 12.5h2M14.5 16h2"/></svg>
+          <span>Companies</span><span class="badge" id="company-count"></span>
+        </button>
         <button data-tab="shifts">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
           <span>Shifts</span><span class="badge" id="shift-count"></span>
+        </button>
+        <button data-tab="advances">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2c-.5-.9-1.6-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2.1 0 2.9 5.8 1.5 5.8 4.3 0 1.3-1.3 2.1-3 2.1-1.3 0-2.4-.6-2.9-1.5M12 6v1.8M12 16.3V18"/></svg>
+          <span>Advances</span><span class="badge" id="advance-count"></span>
         </button>
       </nav>
       <div class="sidebar-foot">
@@ -65,9 +77,13 @@
               <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
               Salary rules
             </button>
-            <a class="btn primary" href="/api/export.xlsx">
+            <a class="btn" href="/api/export.xlsx">
               <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
               Download Excel
+            </a>
+            <a class="btn primary" href="/api/slips.zip" id="btn-all-slips" title="One PDF per employee, in a ZIP file">
+              <svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="M13 11v6"/><path d="m10.5 14.5 2.5 2.5 2.5-2.5"/></svg>
+              Download all slips (PDF)
             </a>
           </div>
         </header>
@@ -93,6 +109,7 @@
           <div class="panel">
             <div class="panel-head">
               <h2>Employees</h2>
+              <div class="segmented hidden" id="salary-company-filter"></div>
               <span class="muted small">Click a row for day-by-day attendance</span>
             </div>
             <div class="table-wrap">
@@ -101,6 +118,7 @@
                   <tr>
                     <th>Employee</th>
                     <th>Shift</th>
+                    <th>Company</th>
                     <th class="num">Monthly</th>
                     <th class="num" title="Present + Late days">Worked</th>
                     <th class="num">Half</th>
@@ -110,7 +128,10 @@
                     <th class="num" title="Missing Clock In or Clock Out">Missing</th>
                     <th class="num">Deduction</th>
                     <th class="num">Fines</th>
+                    <th class="num" title="Advance recovered this month">Advance</th>
+                    <th class="num" title="Overtime incentive for extra hours">Incentive</th>
                     <th class="num">Net salary</th>
+                    <th class="num" title="Download this employee's salary slip (PDF)"><span class="sr">Slip</span></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -126,15 +147,20 @@
         <header class="page-head">
           <div>
             <h1>Staff</h1>
-            <p class="sub">Enter each employee's monthly salary and shift. Daily rate = monthly ÷ <span data-divisor>30.5</span>. Leave blank to use the default monthly salary. Changes save automatically.</p>
+            <p class="sub">Enter each employee's company, monthly salary, shift and bank account (used for the bank transfer sheet). Daily rate = monthly ÷ <span data-divisor>30.5</span>. Leave blank to use the default monthly salary. Changes save automatically.</p>
           </div>
           <span class="saved" data-saved></span>
         </header>
         <div class="panel">
           <div class="toolbar" id="staff-toolbar">
-            <div class="segmented" id="staff-filter"></div>
+            <div class="filters">
+              <div class="segmented" id="staff-filter"></div>
+              <select class="input" id="staff-company-filter" aria-label="Filter by company"></select>
+            </div>
             <div class="bulk">
               <span class="muted small" id="selected-count">0 selected</span>
+              <select class="input" id="bulk-company" aria-label="Company for selected staff"></select>
+              <button class="btn" id="btn-bulk-company" disabled>Set company</button>
               <select class="input" id="bulk-shift" aria-label="Shift for selected staff"></select>
               <button class="btn" id="btn-bulk-shift" disabled>Move to shift</button>
             </div>
@@ -145,9 +171,13 @@
                 <tr>
                   <th class="check"><input type="checkbox" id="check-all" aria-label="Select all"></th>
                   <th>Employee</th>
+                  <th>Company</th>
                   <th>Shift</th>
                   <th class="num" title="Leave blank to use the default monthly salary (Salary rules)">Monthly salary (₹)</th>
                   <th class="num">Daily rate</th>
+                  <th title="Name on the bank account (blank = employee name)">Account holder</th>
+                  <th>Account number</th>
+                  <th>IFSC</th>
                   <th class="num">Net (this sheet)</th>
                 </tr>
               </thead>
@@ -156,6 +186,26 @@
           </div>
           <p class="empty hidden" id="staff-empty">Upload an attendance sheet on the Salary page to list your staff here.</p>
         </div>
+      </section>
+
+      <!-- ================= Companies ================= -->
+      <section id="tab-companies" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Companies</h1>
+            <p class="sub">Each firm pays its own staff from its bank account. Assign staff here or on the Staff page, then download each firm's bank transfer sheet.</p>
+          </div>
+          <div class="head-actions">
+            <span class="saved" data-saved></span>
+            <button class="btn primary" id="btn-add-company">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Add company
+            </button>
+          </div>
+        </header>
+        <div class="warnings hidden" id="unassigned-note"></div>
+        <div class="company-grid" id="company-grid"></div>
+        <p class="empty panel hidden" id="company-empty">No companies yet. Add your firms, then assign staff to each one.</p>
       </section>
 
       <!-- ================= Shifts ================= -->
@@ -175,46 +225,149 @@
         </header>
         <div class="shift-grid" id="shift-grid"></div>
       </section>
+
+      <!-- ================= Advances ================= -->
+      <section id="tab-advances" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Advances</h1>
+            <p class="sub">Record salary advances and how much to deduct each month. The deduction comes off the net salary until the advance is repaid. <span id="advance-month-note"></span></p>
+          </div>
+          <span class="saved" data-saved></span>
+        </header>
+
+        <form class="panel adv-form" id="advance-form" autocomplete="off">
+          <div class="panel-head"><h2>New advance</h2><span class="muted small" id="adv-plan"></span></div>
+          <div class="adv-fields">
+            <label class="field-label">Staff<select class="input" name="emp_id" required></select></label>
+            <label class="field-label">Advance amount (₹)<input class="input" name="amount" type="number" min="1" step="1" required></label>
+            <label class="field-label">Deduct per month (₹)<input class="input" name="installment" type="number" min="1" step="1" required></label>
+            <label class="field-label">Date given<input class="input" name="date" type="date" required></label>
+            <label class="field-label">Start deducting from<input class="input" name="start_month" type="month" required></label>
+            <label class="field-label wide">Note<input class="input" name="note" maxlength="200" placeholder="Optional"></label>
+            <button class="btn primary" type="submit">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Add advance
+            </button>
+          </div>
+        </form>
+
+        <div class="panel">
+          <div class="toolbar">
+            <div class="segmented" id="advance-filter"></div>
+            <span class="muted small">Click a row for its month-by-month recovery. Edit the monthly or this month's deduction in the table; changes save automatically.</span>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="advance-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Given</th>
+                  <th class="num">Advance</th>
+                  <th class="num">Per month (₹)</th>
+                  <th class="num" id="advance-month-head">This month (₹)</th>
+                  <th class="num">Recovered</th>
+                  <th class="num">Balance</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="empty hidden" id="advance-empty"></p>
+        </div>
+
+        <div class="panel recovery-panel hidden" id="recovery-panel">
+          <div class="panel-head">
+            <h2>Monthly recovery</h2>
+            <span class="muted small">Total recovered from all staff each month. Later months are the plan.</span>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="recovery-table">
+              <thead>
+                <tr><th>Month</th><th class="num">Recovered</th><th class="bar-col"></th><th>From</th><th class="num">Balance after</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= Salary rules ================= -->
+      <section id="tab-rules" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Salary rules</h1>
+            <p class="sub">How attendance turns into salary. Changes save automatically and recalculate the current sheet straight away.</p>
+          </div>
+          <span class="saved" data-saved></span>
+        </header>
+        <div class="panel rules-scope" id="rules-scope-panel">
+          <div class="scope-row">
+            <span class="field-label">Rules for</span>
+            <div class="segmented" id="rules-scope" role="tablist" aria-label="Which salary rules to edit"></div>
+          </div>
+          <label class="check-row hidden" id="rules-own-row"><input type="checkbox" id="rules-own">
+            <span>Use separate rules for this company<span class="hint">Off: this company's staff use the default rules</span></span></label>
+          <p class="hint" id="rules-scope-note"></p>
+        </div>
+        <form id="rules-form" class="form rules-grid">
+          <div class="form-group rule-card">
+            <div class="group-title">Base pay</div>
+            <label>Default monthly salary (₹)<input class="input" name="monthly_salary" data-key="rule:monthly_salary" type="number" min="0" step="1"></label>
+            <label>Daily rate divisor<input class="input" name="salary_divisor" data-key="rule:salary_divisor" type="number" min="1" step="0.5"><span class="hint">Daily rate = monthly ÷ this</span></label>
+          </div>
+          <div class="form-group rule-card">
+            <div class="group-title">Working days</div>
+            <label class="check-row"><input type="checkbox" name="weekends_working" data-key="rule:weekends_working">
+              <span>Every day is a working day<span class="hint">Weekends and holidays included — the device's "Week Off" / "Holiday" is ignored; no punches = absent</span></span></label>
+            <label>Sunday finishes at<input class="input" name="sunday_logout_time" data-key="rule:sunday_logout_time" type="time"><span class="hint">Leaving from this time on Sunday is a full day; time after it is overtime</span></label>
+          </div>
+          <div class="form-group rule-card">
+            <div class="group-title">Attendance</div>
+            <label>Paid absences per month<input class="input" name="allowed_absences" data-key="rule:allowed_absences" type="number" min="0" step="1"><span class="hint">0 = every absence is deducted at the daily rate</span></label>
+            <label>Half day deduction (days)<input class="input" name="half_day_deduction" data-key="rule:half_day_deduction" type="number" min="0" max="1" step="0.25"></label>
+          </div>
+          <div class="form-group rule-card">
+            <div class="group-title">Overtime incentive</div>
+            <label class="check-row"><input type="checkbox" name="overtime_pay" data-key="rule:overtime_pay">
+              <span>Pay for extra hours<span class="hint">Time after the shift's logout (Sunday: after the Sunday finish)</span></span></label>
+            <div class="choice" data-show="overtime_pay=1">
+              <label><input type="radio" name="overtime_mode" value="hourly"><span>Hourly rate</span></label>
+              <label><input type="radio" name="overtime_mode" value="fixed"><span>Fixed rate</span></label>
+            </div>
+            <span class="hint" data-show="overtime_pay=1&amp;overtime_mode=hourly">Each employee's own hourly rate: daily rate ÷ shift hours.</span>
+            <label data-show="overtime_pay=1&amp;overtime_mode=fixed">Fixed amount (₹ per overtime hour)<input class="input" name="overtime_fixed_rate" data-key="rule:overtime_fixed_rate" type="number" min="0" step="1">
+              <span class="hint">The same for every employee, whatever their salary</span></label>
+            <label data-show="overtime_pay=1">Overtime starts after (minutes past logout)<input class="input" name="overtime_min_minutes" data-key="rule:overtime_min_minutes" type="number" min="0" step="5"><span class="hint">Leaving earlier than this after logout earns no overtime</span></label>
+            <label data-show="overtime_pay=1">Then count every (minutes)<input class="input" name="overtime_block_minutes" data-key="rule:overtime_block_minutes" type="number" min="1" step="5">
+              <span class="hint" id="ot-example"></span></label>
+          </div>
+          <div class="form-group rule-card">
+            <div class="group-title">Late arrival</div>
+            <div class="choice">
+              <label><input type="radio" name="late_mode" value="fine"><span>Fine per late day</span></label>
+              <label><input type="radio" name="late_mode" value="hourly"><span>Cut salary by the hour</span></label>
+            </div>
+            <label data-show="late_mode=fine">Fine amount (₹ per late day)<input class="input" name="late_fine" data-key="rule:late_fine" type="number" min="0" step="1"></label>
+            <label data-show="late_mode=hourly">Round late time up to (minutes)<input class="input" name="late_hour_block" data-key="rule:late_hour_block" type="number" min="1" step="5">
+              <span class="hint" id="late-example"></span></label>
+          </div>
+          <div class="form-group rule-card">
+            <div class="group-title">Missing clock in or clock out</div>
+            <div class="choice">
+              <label><input type="radio" name="missing_punch_as_leave" value="1"><span>Mark as leave</span></label>
+              <label><input type="radio" name="missing_punch_as_leave" value="0"><span>Present with a fine</span></label>
+            </div>
+            <span class="hint" data-show="missing_punch_as_leave=1">A day with only one punch is deducted like an absence.</span>
+            <label data-show="missing_punch_as_leave=0">Fine amount (₹ per missing punch)<input class="input" name="missing_punch_fine" data-key="rule:missing_punch_fine" type="number" min="0" step="1"></label>
+          </div>
+        </form>
+        <p class="hint rules-foot">Default monthly salary applies to staff with no salary entered. Late arrival is measured from each employee's shift login time (after its grace minutes); hourly rate = daily rate ÷ shift hours. Early leave is not marked.</p>
+      </section>
     </main>
   </div>
 
-  <!-- ================= Rules drawer ================= -->
-  <div class="drawer-backdrop hidden" id="drawer-backdrop"></div>
-  <aside class="drawer" id="rules-drawer" aria-hidden="true" aria-label="Salary rules">
-    <div class="drawer-head">
-      <div>
-        <h2>Salary rules</h2>
-        <span class="saved" data-saved></span>
-      </div>
-      <button class="icon-btn" id="btn-close-rules" aria-label="Close">
-        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-    </div>
-    <form id="rules-form" class="form">
-      <div class="form-group">
-        <div class="group-title">Base pay</div>
-        <label>Default monthly salary (₹)<input class="input" name="monthly_salary" data-key="rule:monthly_salary" type="number" min="0" step="1"></label>
-        <label>Daily rate divisor<input class="input" name="salary_divisor" data-key="rule:salary_divisor" type="number" min="1" step="0.5"><span class="hint">Daily rate = monthly ÷ this</span></label>
-      </div>
-      <div class="form-group">
-        <div class="group-title">Working days</div>
-        <label class="check-row"><input type="checkbox" name="weekends_working" data-key="rule:weekends_working">
-          <span>Saturday &amp; Sunday are working days<span class="hint">Device "Week Off" is ignored; no punches = absent</span></span></label>
-        <label>Sunday finishes at<input class="input" name="sunday_logout_time" data-key="rule:sunday_logout_time" type="time"><span class="hint">Leaving from this time on Sunday is a full day — no half day deduction</span></label>
-      </div>
-      <div class="form-group">
-        <div class="group-title">Attendance</div>
-        <label>Paid absences per month<input class="input" name="allowed_absences" data-key="rule:allowed_absences" type="number" min="0" step="1"></label>
-        <label>Half day deduction (days)<input class="input" name="half_day_deduction" data-key="rule:half_day_deduction" type="number" min="0" max="1" step="0.25"></label>
-      </div>
-      <div class="form-group">
-        <div class="group-title">Fines (₹ each)</div>
-        <label>Late arrival<input class="input" name="late_fine" data-key="rule:late_fine" type="number" min="0" step="1"></label>
-        <label>Missing punch<input class="input" name="missing_punch_fine" data-key="rule:missing_punch_fine" type="number" min="0" step="1"></label>
-      </div>
-    </form>
-    <p class="hint pad">Default monthly salary applies to staff with no salary entered. Late arrival uses each employee's shift login time. Early leave is not marked.</p>
-  </aside>
 
   <div class="toast hidden" id="toast"></div>
   <script src="app.js"></script>
