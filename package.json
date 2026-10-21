@@ -17,6 +17,9 @@
     "node": ">=20"
   },
   "pkg": {
+    "scripts": [
+      "node_modules/fflate/lib/*.cjs"
+    ],
     "assets": [
       "public/**/*"
     ],
