@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const XLSX = require('xlsx');
-const { parseWorkbook, classifyDay, calculatePayroll, normalizeSettings, advanceForMonth, advanceSchedule, resolveStaffIds, DEFAULT_RULES, DEFAULT_SHIFT, SETTINGS_VERSION } = require('../lib/payroll');
+const { parseWorkbook, classifyDay, calculatePayroll, normalizeSettings, advanceForMonth, advanceSchedule, resolveStaffIds, renumberDuplicateIds, DEFAULT_RULES, DEFAULT_SHIFT, SETTINGS_VERSION } = require('../lib/payroll');
 const { unzipSync } = require('fflate');
 const { buildSlipPdf, buildSlipsZip } = require('../lib/slip');
 const { buildBankTransfer } = require('../lib/export');
@@ -323,7 +323,7 @@ test('a new sheet never takes over another person saved with the same employee I
   const staff = {
     2: { name: 'SAMUVEL', salary: 12000 },
     3: { name: 'M SANJAY' },
-    '4': { name: 'NANDHA' }, '4_2': { name: 'SUDHARSAN', device_id: '4' },
+    '4': { name: 'NANDHA' }, '4_1': { name: 'SUDHARSAN', device_id: '4' },
   };
   const parsed = { warnings: [], employees: [
     { id: '2', name: 'SARAVANAN' },   // same ID, different person
@@ -332,9 +332,41 @@ test('a new sheet never takes over another person saved with the same employee I
     { id: '9', name: 'NEW' },
   ] };
   resolveStaffIds(staff, parsed);
-  assert.deepEqual(parsed.employees.map(e => [e.id, e.device_id]), [['2_2', '2'], ['3', '3'], ['4_2', '4'], ['9', '9']]);
+  assert.deepEqual(parsed.employees.map(e => [e.id, e.device_id]), [['2_1', '2'], ['3', '3'], ['4_1', '4'], ['9', '9']]);
   assert.equal(parsed.warnings.length, 1);
-  assert.match(parsed.warnings[0], /ID 2 is SARAVANAN .* SAMUVEL/);
+  assert.match(parsed.warnings[0], /SAMUVEL is already saved with ID 2 — added SARAVANAN as employee 2_1/);
+});
+
+test('two people with the same ID in one sheet: the second becomes <id>_1, the third <id>_2', () => {
+  const parsed = { warnings: [], employees: [
+    { id: '5', name: 'ASHA' }, { id: '5', name: 'RAVI' }, { id: '7', name: 'MEENA' }, { id: '5', name: 'KUMAR' },
+  ] };
+  resolveStaffIds({}, parsed);
+  assert.deepEqual(parsed.employees.map(e => [e.id, e.device_id]), [['5', '5'], ['5_1', '5'], ['7', '7'], ['5_2', '5']]);
+  assert.match(parsed.warnings[0], /ASHA also has ID 5 in this sheet — added RAVI as employee 5_1/);
+  assert.match(parsed.warnings[1], /ASHA, RAVI also has ID 5 in this sheet — added KUMAR as employee 5_2/);
+  // Uploading the same sheet again finds the same records.
+  const staff = Object.fromEntries(parsed.employees.map(e => [e.id, { name: e.name, ...(e.id !== e.device_id && { device_id: e.device_id }) }]));
+  const again = { warnings: [], employees: ['ASHA', 'RAVI', 'KUMAR'].map(name => ({ id: '5', name })) };
+  resolveStaffIds(staff, again);
+  assert.deepEqual(again.employees.map(e => e.id), ['5', '5_1', '5_2']);
+  assert.equal(again.warnings.length, 0);
+});
+
+test('settings v5 renumbers old "<id>_2" duplicate keys to "<id>_1"', () => {
+  const settings = {
+    staff: {
+      4: { name: 'NANDHA' }, '4_2': { name: 'SUDHARSAN', device_id: '4', salary: 9000 }, '4_3': { name: 'X', device_id: '4' },
+      6: { name: 'A' }, '6_1': { name: 'B', device_id: '6' }, '6_2': { name: 'C', device_id: '6' },  // already new style
+      '8_2': { name: 'not a duplicate key', device_id: '8_2' },
+    },
+    advances: { a1: { emp_id: '4_2' }, a2: { emp_id: '6' } },
+  };
+  const renames = renumberDuplicateIds(settings);
+  assert.deepEqual(renames, { '4_2': '4_1', '4_3': '4_2' });
+  assert.deepEqual(Object.keys(settings.staff).sort(), ['4', '4_1', '4_2', '6', '6_1', '6_2', '8_2']);
+  assert.equal(settings.staff['4_1'].salary, 9000);
+  assert.equal(settings.advances.a1.emp_id, '4_1');
 });
 
 // ---------- Version 3 salary rules ----------

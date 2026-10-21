@@ -6,6 +6,8 @@ const money = n => inr.format(Number(n || 0));
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const fmtDate = iso => { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
+// Avatar colour from the name, so each person keeps their colour.
+const avatar = name => `<span class="avatar" style="--h:${[...String(name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)}">${esc(initials(name))}</span>`;
 const initials = name => String(name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 const ICON = {
   chev: '<svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
@@ -20,6 +22,7 @@ const ICON = {
   building: '<svg viewBox="0 0 24 24"><path d="M4 20V6.5L11 4v16"/><path d="M11 9h9v11"/><path d="M3 20h18"/><path d="M7 9h.01M7 12.5h.01M7 16h.01M14.5 12.5h2M14.5 16h2"/></svg>',
   bank: '<svg viewBox="0 0 24 24"><path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20h18"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg>',
+  print: '<svg viewBox="0 0 24 24"><path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="9" rx="2"/><path d="M7 14h10v7H7z"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>',
 };
 const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -41,25 +44,57 @@ let staffFilter = 'all';
 let staffCompanyFilter = 'all';   // 'all' | '' (no company) | company id
 let salaryCompanyFilter = 'all';
 let rulesScope = '';               // '' = default rules, else a company id
+let months = [];                   // saved months, newest first: [{month, file, locked, employees, net, paid_count}]
+let activeMonth = null;            // the month open on the Salary page
+let undoLabel = null;              // the change "Undo" would revert (from the server)
+let salarySearch = '';
+let salarySort = { key: '', dir: 1 };
+let staffSearch = '';
+let staffView = 'active';          // active | left | all | no_salary | no_bank | no_company
 const shiftDrafts = new Map();   // shift id -> edited (unsaved) shift
 const newShifts = new Set();     // ids of shifts added but not saved yet
 
 // ---------- Helpers ----------
-function toast(msg, error = false) {
+// toast(msg, error) — or toast(msg, {undo: true}) to offer "Undo" for the change just made.
+function toast(msg, opts = false) {
+  const { error = opts === true, undo = false } = typeof opts === 'object' ? opts : {};
   const t = $('toast');
-  t.textContent = msg;
+  t.innerHTML = `<span>${esc(msg)}</span>${undo && undoLabel ? '<button class="toast-btn" data-undo>Undo</button>' : ''}`;
   t.classList.toggle('error', error);
   t.classList.remove('hidden');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.add('hidden'), 4000);
+  toast.timer = setTimeout(() => t.classList.add('hidden'), undo ? 7000 : 4000);
 }
+$('toast').addEventListener('click', async e => {
+  if (!e.target.closest('[data-undo]')) return;
+  $('toast').classList.add('hidden');
+  try {
+    const res = await api('/api/undo', { method: 'POST' });
+    applyState(res);
+    renderAll();
+    toast(`Undone: ${res.undone}`);
+  } catch (err) { toast(err.message, true); }
+});
+
+// ---------- Dialog ----------
+function openModal(html, { wide = false } = {}) {
+  $('modal-box').innerHTML = html;
+  $('modal-box').classList.toggle('wide', wide);
+  $('modal').classList.remove('hidden');
+  ($('modal-box').querySelector('[autofocus]') || $('modal-box').querySelector('input, select, button'))?.focus();
+}
+const closeModal = () => $('modal').classList.add('hidden');
+$('modal').addEventListener('click', e => { if (e.target === $('modal') || e.target.closest('[data-close]')) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal').classList.contains('hidden')) closeModal(); });
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (res.status === 401 && data.code === 'locked') showLock();
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { data, status: res.status });
   return data;
 }
+const putJson = (url, body, method = 'PUT') => api(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 function flashSaved() {
   const els = document.querySelectorAll('[data-saved]');
@@ -68,14 +103,13 @@ function flashSaved() {
   flashSaved.timer = setTimeout(() => els.forEach(el => (el.textContent = '')), 1600);
 }
 
-async function saveSettings(patch) {
+async function saveSettings(patch, msg = 'Saved') {
   try {
-    const res = await api('/api/settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    });
+    const res = await putJson('/api/settings', patch);
     applyState(res);
     renderAll();
     flashSaved();
+    toast(msg, { undo: true });
     return true;
   } catch (err) {
     toast(err.message, true);
@@ -86,6 +120,19 @@ async function saveSettings(patch) {
 
 function applyState(res) {
   ({ settings, report, advances, month } = res);
+  months = res.months || [];
+  activeMonth = res.active_month || null;
+  undoLabel = res.undo || null;
+}
+
+// Corrections, adjustments and payments for the open month.
+async function editMonth(patch, msg = 'Saved') {
+  try {
+    applyState(await putJson('/api/month/edits', patch));
+    renderAll();
+    toast(msg, { undo: true });
+    return true;
+  } catch (err) { toast(err.message, true); return false; }
 }
 
 const divisor = () => Number(settings.rules.salary_divisor) || 30.5;
@@ -95,7 +142,9 @@ const reportEmployee = id => report?.employees.find(e => e.id === id);
 
 // ---------- Rendering ----------
 function setTab(tab) {
-  if (!['salary', 'rules', 'staff', 'companies', 'shifts', 'advances'].includes(tab)) tab = 'salary';
+  if (!['salary', 'rules', 'staff', 'companies', 'shifts', 'advances', 'reports', 'settings'].includes(tab)) tab = 'salary';
+  if (tab === 'reports' && setTab.current !== 'reports') loadReports();
+  setTab.current = tab;
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('hidden', s.id !== `tab-${tab}`));
   if (location.hash !== `#${tab}`) history.replaceState(null, '', `#${tab}`);
@@ -148,26 +197,60 @@ function showUpload(on) {
   $('cancel-upload').classList.toggle('hidden', !(on && report));
 }
 
-async function uploadFile(file) {
+async function uploadFile(file, replace = false) {
   if (!file) return;
   $('upload-error').classList.add('hidden');
   $('progress').classList.remove('hidden');
   const body = new FormData();
   body.append('file', file);
   try {
-    applyState(await api('/api/upload', { method: 'POST', body }));
+    const res = await api(`/api/upload${replace ? '?replace=1' : ''}`, { method: 'POST', body });
+    applyState(res);
     openRows.clear();
     selected.clear();
     showUpload(false);
     renderAll();
-    toast(`Read ${report.employees.length} employees from ${file.name}`);
+    showUploadSummary(res.upload_summary, file.name);
+    api('/api/folders').then(f => ($('month-dir').textContent = f.month_dir)).catch(() => {});
   } catch (e) {
+    // Same month uploaded before: replace its attendance (corrections, adjustments and payments are kept)?
+    if (e.data?.code === 'exists' && confirm(`${fullMonth(e.data.month)} is already in StaffPay (from “${e.data.file}”).\n\nReplace its attendance with this sheet? Corrections, adjustments and payments for the month are kept.`)) {
+      return uploadFile(file, true);
+    }
     $('upload-error').textContent = e.message;
     $('upload-error').classList.remove('hidden');
   } finally {
     $('progress').classList.add('hidden');
     $('file').value = '';
   }
+}
+
+// After an upload: what was read and what needs attention.
+function showUploadSummary(s, fileName) {
+  if (!s) return;
+  const list = (items, more = 8) => items.length
+    ? `<span class="names">${items.slice(0, more).map(x => esc(`${x.name} (#${x.id})`)).join(', ')}${items.length > more ? ` and ${items.length - more} more` : ''}</span>` : '';
+  const rows = [
+    [ICON.check, 'good', `${s.employees} employees read for ${fullMonth(s.month)}`, ''],
+    s.new_staff.length && [ICON.people, 'info', `${s.new_staff.length} new staff added`, list(s.new_staff), 'no_salary'],
+    s.renamed.length && [ICON.alert, 'warn', `${s.renamed.length} share an employee ID with someone else and were added with a new ID`, list(s.renamed)],
+    s.left.length && [ICON.alert, 'warn', `${s.left.length} marked as left are in this sheet`, list(s.left), 'left'],
+    s.no_salary.length && [ICON.wallet, 'warn', `${s.no_salary.length} have no salary entered (default salary used)`, list(s.no_salary), 'no_salary'],
+    s.no_company.length && [ICON.building, 'warn', `${s.no_company.length} have no company`, list(s.no_company), 'no_company'],
+    s.no_bank.length && [ICON.bank, 'warn', `${s.no_bank.length} have no bank account / IFSC`, list(s.no_bank, 5), 'no_bank'],
+    s.warnings.length && [ICON.alert, 'warn', `${s.warnings.length} other item${s.warnings.length > 1 ? 's' : ''} to check`,
+      `<details><summary>Show</summary><ul>${s.warnings.slice(0, 50).map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>`],
+  ].filter(Boolean);
+  openModal(`<h2>Sheet uploaded</h2><p class="hint">${esc(fileName)}</p>
+    <ul class="summary-list">${rows.map(([icon, tone, title, body, fix]) => `<li class="${tone}"><span class="sum-icon">${icon}</span>
+      <div><b>${esc(title)}</b>${body ? `<div>${body}</div>` : ''}${fix ? `<button class="link" data-fix="${fix}">Fix on Staff page →</button>` : ''}</div></li>`).join('')}</ul>
+    <div class="modal-actions"><span class="spacer"></span><button class="btn primary" data-close autofocus>Done</button></div>`, { wide: true });
+  $('modal-box').querySelectorAll('[data-fix]').forEach(b => b.addEventListener('click', () => {
+    closeModal();
+    staffView = b.dataset.fix; staffFilter = 'all'; staffCompanyFilter = 'all'; staffSearch = '';
+    renderStaff();
+    setTab('staff');
+  }));
 }
 
 const dz = $('dropzone');
@@ -181,6 +264,69 @@ for (const id of ['btn-new', 'btn-new-mobile']) {
 $('btn-cancel').addEventListener('click', () => showUpload(false));
 
 // ---------- Salary page ----------
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const isLocked = () => Boolean(report?.locked);
+const adjustOf = e => (e.extra_earnings || 0) - (e.extra_deductions || 0);
+const matches = (q, ...fields) => !q || fields.some(f => String(f || '').toLowerCase().includes(q.toLowerCase()));
+const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
+
+function renderMonthBar() {
+  $('month-select').innerHTML = months.map(m =>
+    `<option value="${esc(m.month)}" ${m.month === activeMonth ? 'selected' : ''}>${esc(fullMonth(m.month))}${m.locked ? ' 🔒' : ''} · ${m.employees} staff · ${money(m.net)}${m.paid_count ? ` · ${m.paid_count} paid` : ''}</option>`).join('');
+  const locked = isLocked();
+  $('lock-badge').classList.toggle('hidden', !locked);
+  $('lock-badge').textContent = locked ? `Locked ${fmtDate(report.locked.slice(0, 10))}` : '';
+  $('btn-lock-month').innerHTML = locked
+    ? '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg> Unlock month'
+    : '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> Lock month';
+  $('btn-lock-month').title = locked ? 'Allow changes to this month again (salaries are recalculated with today\'s settings)' : 'Freeze this month\'s salaries — later changes to rules, salaries or advances won\'t change it';
+  $('btn-delete-month').disabled = locked;
+  $('locked-note').classList.toggle('hidden', !locked);
+  $('locked-note').innerHTML = locked ? `<b>${esc(fullMonth(report.month))} is locked.</b> Salaries are frozen as they were on ${fmtDate(report.locked.slice(0, 10))}; changes to rules, salaries or advances don't affect it. You can still mark staff as paid.` : '';
+}
+
+// What still needs doing before paying: missing salaries, companies, bank details; people who left.
+let checklistOpen = (() => { try { return localStorage.getItem('checklist') !== 'closed'; } catch { return true; } })();
+function renderChecklist() {
+  const st = id => settings.staff[id] || {};
+  const emps = report.employees;
+  const items = [
+    ['no_salary', emps.filter(e => !e.salary_mapped).length, n => `${n} staff on the default salary (${money(settings.rules.monthly_salary)}) — enter their monthly salary`],
+    ['no_company', companyList().length ? emps.filter(e => !e.company_id).length : 0, n => `${n} staff without a company`],
+    ['no_bank', emps.filter(e => !hasBank(st(e.id))).length, n => `${n} staff without bank account or IFSC (needed for the bank transfer sheet)`],
+    ['left', emps.filter(e => st(e.id).left_on).length, n => `${n} staff in this sheet are marked as left`],
+  ].filter(([, n]) => n);
+  const unpaid = emps.length - (report.totals.paid_count || 0);
+  const el = $('checklist');
+  el.classList.toggle('hidden', !items.length);
+  if (!items.length) return;
+  el.innerHTML = `<button class="checklist-head" data-toggle aria-expanded="${checklistOpen}">
+      <span class="check-icon">${ICON.alert}</span><b>${items.length} thing${items.length > 1 ? 's' : ''} to finish setting up</b>
+      <span class="muted small">${unpaid ? `${unpaid} not paid yet` : 'everyone paid'}</span>${ICON.chev}</button>
+    ${checklistOpen ? `<ul>${items.map(([view, n, text]) => `<li><span>${esc(text(n))}</span>
+      <button class="link" data-fix="${view}">Fix on Staff page →</button></li>`).join('')}</ul>` : ''}`;
+  el.classList.toggle('open', checklistOpen);
+}
+$('checklist').addEventListener('click', e => {
+  if (e.target.closest('[data-toggle]')) {
+    checklistOpen = !checklistOpen;
+    try { localStorage.setItem('checklist', checklistOpen ? 'open' : 'closed'); } catch { /* private window */ }
+    return renderChecklist();
+  }
+  const fix = e.target.closest('[data-fix]')?.dataset.fix;
+  if (fix) { staffView = fix === 'left' ? 'left' : fix; staffFilter = 'all'; staffCompanyFilter = 'all'; staffSearch = ''; renderStaff(); setTab('staff'); }
+});
+
+function sortedEmployees(list) {
+  const { key, dir } = salarySort;
+  if (!key) return list;
+  const val = e => (key === 'adjust' ? adjustOf(e) : e[key]);
+  return [...list].sort((a, b) => {
+    const x = val(a), y = val(b);
+    return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x || '').localeCompare(String(y || ''), undefined, { numeric: true })) * dir;
+  });
+}
+
 function renderSalary() {
   if (!report) {
     $('salary-sub').textContent = 'Upload the biometric attendance sheet to calculate salary.';
@@ -190,6 +336,8 @@ function renderSalary() {
   if ($('upload-view').classList.contains('hidden')) showUpload(false);
   const r = report;
   $('salary-sub').textContent = `${r.company || 'Attendance'} · ${r.period.from ? `${fmtDate(r.period.from)} – ${fmtDate(r.period.to)}` : ''} · ${r.calendar_days} days`;
+  renderMonthBar();
+  renderChecklist();
 
   const w = $('warnings');
   w.classList.toggle('hidden', !r.warnings.length);
@@ -205,31 +353,42 @@ function renderSalary() {
   cf.innerHTML = comps.length ? [['all', 'All', r.employees.length], ...comps.map(c => [c.id, c.name, inCompany(c.id)]),
     ...(inCompany('') ? [['', 'No company', inCompany('')]] : [])]
     .map(([id, label, n]) => `<button data-filter="${esc(id)}" class="${salaryCompanyFilter === id ? 'active' : ''}">${esc(label)}<span class="n">${n}</span></button>`).join('') : '';
-  const emps = r.employees.filter(e => salaryCompanyFilter === 'all' || e.company_id === salaryCompanyFilter);
-  const t = salaryCompanyFilter === 'all' ? r.totals : Object.fromEntries(Object.keys(r.totals).map(k => [k, emps.reduce((s, e) => s + (e[k] || 0), 0)]));
+  const inFilter = r.employees.filter(e => salaryCompanyFilter === 'all' || e.company_id === salaryCompanyFilter);
+  const emps = sortedEmployees(inFilter.filter(e => matches(salarySearch, e.name, e.id)));
+  const t = salaryCompanyFilter === 'all' ? r.totals : Object.fromEntries(Object.keys(r.totals).map(k => [k, inFilter.reduce((s, e) => s + (e[k] || 0), 0)]));
+  t.paid_count = inFilter.filter(e => e.paid_on).length;
   const stat = (label, value, icon, cls = '') =>
     `<div class="stat ${cls}"><div class="top"><span class="label">${label}</span><span class="chip">${icon}</span></div><div class="value">${value}</div></div>`;
   const statCount = 5 + (t.advance_deduction ? 1 : 0) + (t.overtime_incentive ? 1 : 0);
   $('stats').style.setProperty('--n', statCount - 1);
   $('stats').innerHTML =
-    stat('Employees', emps.length, ICON.people) +
-    stat('Monthly salaries', money(t.base_salary), ICON.wallet) +
+    stat('Employees', `${inFilter.length}<span class="stat-sub">${t.paid_count ? `${t.paid_count} paid` : 'none paid yet'}</span>`, ICON.people, 'people') +
+    stat('Monthly salaries', money(t.base_salary), ICON.wallet, 'pay') +
     stat('Attendance deductions', money(t.attendance_deduction), ICON.minus, 'ded') +
     stat('Fines', money(t.total_fines), ICON.alert, 'fine') +
     (t.advance_deduction ? stat('Advance recovery', money(t.advance_deduction), ICON.rupee, 'adv') : '') +
     (t.overtime_incentive ? stat(`Overtime incentive · ${fmtHours(t.overtime_minutes)}`, money(t.overtime_incentive), ICON.clock, 'ot') : '') +
     stat('Net payable', money(t.net_salary), ICON.check, 'net');
 
+  const printUrl = `/api/slips.pdf${settings.companies[salaryCompanyFilter] ? `?company=${encodeURIComponent(salaryCompanyFilter)}` : ''}`;
+  $('btn-print-slips').href = printUrl;
+  $('btn-mark-paid').disabled = !emps.some(e => !e.paid_on);
+  document.querySelectorAll('#salary-table th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === salarySort.key);
+    th.dataset.dir = th.dataset.sort === salarySort.key ? (salarySort.dir > 0 ? 'asc' : 'desc') : '';
+  });
+
   $('salary-table').tBodies[0].innerHTML = emps.map(e => {
     const open = openRows.has(e.id);
+    const adj = adjustOf(e);
     const row = `
-      <tr class="emp ${open ? 'open' : ''}" data-id="${esc(e.id)}">
-        <td><div class="person">${ICON.chev}<span class="avatar">${esc(initials(e.name))}</span>
-          <div><div class="name">${esc(e.name)}</div><div class="id">#${esc(e.device_id || e.id)}</div></div></div></td>
+      <tr class="emp ${open ? 'open' : ''} ${e.paid_on ? 'is-paid' : ''}" data-id="${esc(e.id)}">
+        <td><div class="person">${ICON.chev}${avatar(e.name)}
+          <div><div class="name">${esc(e.name)}</div><div class="id">#${esc(e.id)}${e.corrections ? ` · <span class="corr-note" title="Days corrected by hand">✎ ${e.corrections}</span>` : ''}</div></div></div></td>
         <td><span class="pill shift" title="${esc(e.shift_time)}">${esc(e.shift_name)}</span></td>
         <td>${e.company_name ? `<span class="pill company">${esc(e.company_name)}</span>` : '<span class="dim">–</span>'}</td>
         <td class="num">${money(e.monthly_salary)}${e.salary_mapped ? '' : '<div class="default-note" title="No salary entered — using the default monthly salary">default</div>'}</td>
-        <td class="num">${e.present_days}</td>
+        <td class="num">${e.present_days}${e.leave_days ? ` <span class="leave-note" title="Paid leave">+${e.leave_days}L</span>` : ''}</td>
         <td class="num">${e.half_days || '<span class="dim">–</span>'}</td>
         <td class="num">${e.absences}${e.excess_absences && e.excess_absences !== e.absences ? ` <span class="excess">(${e.excess_absences})</span>` : ''}</td>
         <td class="num">${e.off_days}</td>
@@ -239,26 +398,32 @@ function renderSalary() {
         <td class="num ${e.total_fines ? 'neg' : 'dim'}">${e.total_fines ? '−' + money(e.total_fines) : '–'}</td>
         <td class="num ${e.advance_deduction ? 'neg' : 'dim'}">${e.advance_deduction ? '−' + money(e.advance_deduction) : '–'}</td>
         <td class="num ${e.overtime_incentive ? 'pos' : 'dim'}" title="${e.overtime_minutes ? fmtHours(e.overtime_minutes) + ' extra' : ''}">${e.overtime_incentive ? '+' + money(e.overtime_incentive) : '–'}</td>
+        <td class="num ${adj > 0 ? 'pos' : adj < 0 ? 'neg' : 'dim'}" title="${esc((e.adjustments || []).map(a => `${a.label}: ${a.kind === 'earning' ? '+' : '−'}${money(a.amount)}`).join('\n'))}">${adj ? signed(adj) : '–'}</td>
         <td class="num net">${money(e.net_salary)}</td>
-        <td class="num"><a class="icon-btn dl" href="${staffDownloadUrl(e.id)}" title="Download ${esc(e.name)}'s salary slip for ${esc(fullMonth(r.month))} (PDF)" aria-label="Download salary slip for ${esc(e.name)}">${ICON.download}</a></td>
+        <td>${e.paid_on
+          ? `<button class="paid-pill" data-unpay title="Paid on ${esc(fmtDate(e.paid_on))} — click to mark as not paid">✓ ${esc(fmtDate(e.paid_on).replace(/ \d{4}$/, ''))}</button>`
+          : '<button class="pay-btn" data-pay title="Mark as paid today">Mark paid</button>'}</td>
+        <td class="num nowrap"><a class="icon-btn" href="${staffDownloadUrl(e.id)}?inline=1" target="_blank" rel="noopener" title="Print ${esc(e.name)}'s slip" aria-label="Print salary slip for ${esc(e.name)}">${ICON.print}</a><a class="icon-btn dl" href="${staffDownloadUrl(e.id)}" title="Download ${esc(e.name)}'s salary slip for ${esc(fullMonth(r.month))} (PDF)" aria-label="Download salary slip for ${esc(e.name)}">${ICON.download}</a></td>
       </tr>`;
     return row + (open ? detailRow(e) : '');
-  }).join('');
+  }).join('') || `<tr><td colspan="18" class="empty">No one matches “${esc(salarySearch)}”.</td></tr>`;
 
   $('salary-table').tFoot.innerHTML = `
     <tr>
-      <td>Total · ${emps.length} staff</td><td></td><td></td>
+      <td>Total · ${inFilter.length} staff</td><td></td><td></td>
       <td class="num">${money(t.base_salary)}</td>
       <td class="num">${t.present_days}</td><td class="num">${t.half_days}</td><td class="num">${t.absences}</td>
       <td class="num">${t.off_days}</td><td class="num">${t.late_arrivals}</td>
       <td class="num">${t.missing_punches}</td>
       <td class="num">${money(t.attendance_deduction)}</td><td class="num">${money(t.total_fines)}</td>
       <td class="num">${money(t.advance_deduction)}</td><td class="num">${money(t.overtime_incentive)}</td>
-      <td class="num">${money(t.net_salary)}</td><td></td>
+      <td class="num">${signed((t.extra_earnings || 0) - (t.extra_deductions || 0))}</td>
+      <td class="num">${money(t.net_salary)}</td><td>${t.paid_count}/${inFilter.length}</td><td></td>
     </tr>`;
 }
 
 function dayClass(d) {
+  if (d.leave) return 'c-leave';
   if (d.off || d.holiday) return 'c-off';
   if (d.absent) return 'c-absent';
   if (d.half) return 'c-half';
@@ -268,18 +433,22 @@ function dayClass(d) {
 }
 
 function detailRow(e) {
+  const locked = isLocked();
   const tiles = e.days.map(d => {
     const [y, m, dd] = d.date.split('-').map(Number);
     const wd = WEEKDAYS[new Date(y, m - 1, dd).getDay()];
     const flags = [d.late && (d.late_hours ? `LATE −${fmtHours(d.late_hours * 60)}` : 'LATE'), d.missing_in && 'NO IN', d.missing_out && 'NO OUT', d.ot_minutes && `+${fmtHours(d.ot_minutes)}`]
       .filter(Boolean).map(f => `<span class="flag">${f}</span>`).join('');
     const times = d.clock_in || d.clock_out ? `${d.clock_in || '—'} → ${d.clock_out || '—'}` : '&nbsp;';
-    return `<div class="day ${dayClass(d)} ${d.unknown ? 'c-unknown' : ''}" title="${esc((d.status || 'No status') + (d.moved ? ' · single evening punch read as log-off' : ''))}">
+    const tip = [d.status || 'No status', d.moved && 'single evening punch read as log-off',
+      d.corrected && `Corrected by hand (was ${d.corrected.was})${d.corrected.note ? `: ${d.corrected.note}` : ''}`,
+      !locked && 'Click to correct this day'].filter(Boolean).join(' · ');
+    return `<button type="button" class="day ${dayClass(d)} ${d.unknown ? 'c-unknown' : ''} ${d.corrected ? 'corrected' : ''}" data-day="${esc(d.date)}" ${locked ? 'disabled' : ''} title="${esc(tip)}">
       <div class="d">${dd} <span>${wd}${d.sunday && !d.absent && !d.off ? ' · short' : ''}</span></div>
-      <div class="cat">${esc(d.category)}</div>
+      <div class="cat">${d.corrected ? '✎ ' : ''}${esc(d.category)}</div>
       <div class="t">${times}</div>
       ${flags ? `<div class="flags">${flags}</div>` : ''}
-    </div>`;
+    </button>`;
   }).join('');
 
   const parts = [
@@ -288,6 +457,7 @@ function detailRow(e) {
     e.rules_name !== 'Default' ? `<span class="pill company">${esc(e.rules_name)} rules</span>` : '',
     !e.absences ? 'No absences'
       : e.allowed_absences ? `Absences ${e.absences} <span class="dim">(${e.allowed_absences} paid, ${e.excess_absences} deducted)</span>` : `Absences ${e.absences} <span class="dim">deducted</span>`,
+    e.leave_days ? `Paid leave ${e.leave_days}` : '',
     e.half_days ? `Half days ${e.half_days}` : '',
     e.attendance_deduction ? `Deduction <b class="neg">−${money(e.attendance_deduction)}</b>` : '',
     e.late_fine ? (e.rules.late_mode === 'hourly' ? `Late ${fmtHours(e.late_hours * 60)} cut −${money(e.late_fine)}` : `Late fines −${money(e.late_fine)}`) : '',
@@ -301,23 +471,87 @@ function detailRow(e) {
     `Net <b>${money(e.net_salary)}</b>`,
   ].filter(Boolean);
 
-  return `<tr class="detail"><td colspan="16">
+  const adjustments = (e.adjustments || []).map(a => `<li>
+      <span class="adj-kind ${a.kind}">${a.kind === 'earning' ? '+' : '−'}</span><span class="adj-label">${esc(a.label)}</span>
+      <b class="${a.kind === 'earning' ? 'pos' : 'neg'}">${a.kind === 'earning' ? '+' : '−'}${money(a.amount)}</b>
+      ${locked ? '' : `<button class="icon-btn sm" data-adj-del="${esc(a.id)}" title="Remove" aria-label="Remove ${esc(a.label)}">${ICON.x}</button>`}</li>`).join('');
+
+  return `<tr class="detail" data-id="${esc(e.id)}"><td colspan="18"><div class="detail-inner">
     <div class="legend">
       <span><i class="c-present"></i>Present</span><span><i class="c-late"></i>Late</span>${Number(e.rules.missing_punch_as_leave) ? '' : '<span><i class="c-missing"></i>Missing punch</span>'}
-      <span><i class="c-half"></i>Half day</span><span><i class="c-absent"></i>Absent</span><span><i class="c-off"></i>Weekly off / holiday</span>
+      <span><i class="c-half"></i>Half day</span><span><i class="c-absent"></i>Absent</span><span><i class="c-leave"></i>Paid leave</span><span><i class="c-off"></i>Weekly off / holiday</span>
+      ${locked ? '' : '<span class="muted">· Click a day to correct it</span>'}
     </div>
     <div class="days">${tiles}</div>
-    <div class="breakdown">${parts.map(p => `<span>${p}</span>`).join('')}
-      <a class="btn sm" href="${staffDownloadUrl(e.id)}">${ICON.download} Salary slip (PDF)</a></div>
-  </td></tr>`;
+    <div class="detail-grid">
+      <div class="adjust-box">
+        <div class="group-title">Bonus, allowance &amp; other deductions</div>
+        ${adjustments ? `<ul class="adj-list">${adjustments}</ul>` : '<p class="hint">None this month.</p>'}
+        ${locked ? '' : `<form class="adj-form" data-adj-form>
+          <select class="input" name="kind" aria-label="Type"><option value="earning">+ Earning</option><option value="deduction">− Deduction</option></select>
+          <input class="input" name="label" placeholder="e.g. Diwali bonus" maxlength="60" aria-label="Description" required>
+          <input class="input amount sm" name="amount" type="number" min="1" step="1" placeholder="₹" aria-label="Amount" required>
+          <button class="btn sm primary">Add</button></form>`}
+      </div>
+      <div class="breakdown">${parts.map(p => `<span>${p}</span>`).join('')}</div>
+    </div>
+    <div class="detail-actions">
+      <button class="btn sm" data-profile="${esc(e.id)}">${ICON.people} Profile</button>
+      <a class="btn sm" href="${staffDownloadUrl(e.id)}?inline=1" target="_blank" rel="noopener">${ICON.print} Print slip</a>
+      <a class="btn sm" href="${staffDownloadUrl(e.id)}">${ICON.download} Download slip (PDF)</a>
+    </div>
+  </div></td></tr>`;
 }
 
+const empById = id => report.employees.find(e => e.id === id);
+
 $('salary-table').tBodies[0].addEventListener('click', e => {
-  const tr = e.target.closest('tr.emp');
+  const tr = e.target.closest('tr[data-id]');
   if (!tr || e.target.closest('a')) return;
   const id = tr.dataset.id;
+  if (e.target.closest('[data-pay]')) return editMonth({ label: `paid ${empById(id).name}`, paid: { [id]: { date: today() } } }, `${empById(id).name} marked as paid`);
+  if (e.target.closest('[data-unpay]')) return editMonth({ label: `not paid ${empById(id).name}`, paid: { [id]: null } }, `${empById(id).name} marked as not paid`);
+  const day = e.target.closest('[data-day]');
+  if (day) return openDayFix(id, day.dataset.day);
+  const del = e.target.closest('[data-adj-del]');
+  if (del) return editMonth({ label: 'remove adjustment', adjustments: { [id]: { [del.dataset.adjDel]: null } } }, 'Adjustment removed');
+  const prof = e.target.closest('[data-profile]');
+  if (prof) return openProfile(prof.dataset.profile);
+  if (!tr.classList.contains('emp') || e.target.closest('button, input, select, form')) return;
   openRows.has(id) ? openRows.delete(id) : openRows.add(id);
   renderSalary();
+});
+
+$('salary-table').tBodies[0].addEventListener('submit', e => {
+  const f = e.target.closest('[data-adj-form]');
+  if (!f) return;
+  e.preventDefault();
+  const id = f.closest('tr[data-id]').dataset.id;
+  const data = Object.fromEntries(new FormData(f));
+  const aid = `adj_${Date.now().toString(36)}`;
+  editMonth({ label: `add ${data.label}`, adjustments: { [id]: { [aid]: { kind: data.kind, label: data.label, amount: data.amount } } } },
+    `${data.kind === 'earning' ? 'Added' : 'Deducted'} ${money(data.amount)} — ${data.label}`);
+});
+
+$('salary-table').tHead.addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]');
+  if (!th) return;
+  const key = th.dataset.sort;
+  // Click: sort (text A→Z, numbers high→low), click again: reverse, third click: back to sheet order.
+  const first = ['name', 'shift_name', 'company_name', 'paid_on'].includes(key) ? 1 : -1;
+  salarySort = salarySort.key !== key ? { key, dir: first } : salarySort.dir === first ? { key, dir: -first } : { key: '', dir: 1 };
+  renderSalary();
+});
+
+$('salary-search').addEventListener('input', e => { salarySearch = e.target.value.trim(); renderSalary(); });
+
+$('btn-mark-paid').addEventListener('click', () => {
+  const ids = report.employees
+    .filter(e => (salaryCompanyFilter === 'all' || e.company_id === salaryCompanyFilter) && matches(salarySearch, e.name, e.id) && !e.paid_on)
+    .map(e => e.id);
+  if (!ids.length) return;
+  if (!confirm(`Mark ${ids.length} staff as paid today (${fmtDate(today())})?`)) return;
+  editMonth({ label: `mark ${ids.length} paid`, paid: Object.fromEntries(ids.map(id => [id, { date: today() }])) }, `${ids.length} staff marked as paid`);
 });
 
 $('salary-company-filter').addEventListener('click', e => {
@@ -326,6 +560,70 @@ $('salary-company-filter').addEventListener('click', e => {
   salaryCompanyFilter = b.dataset.filter;
   renderSalary();
 });
+
+// ---------- Months: switch, lock, delete ----------
+$('month-select').addEventListener('change', async e => {
+  try {
+    applyState(await putJson('/api/months/active', { month: e.target.value }));
+    openRows.clear();
+    renderAll();
+  } catch (err) { toast(err.message, true); }
+});
+
+$('btn-lock-month').addEventListener('click', async () => {
+  const lock = !isLocked();
+  if (!lock && !confirm(`Unlock ${fullMonth(report.month)}? Its salaries will be recalculated with today's rules, salaries and advances.`)) return;
+  try {
+    applyState(await putJson(`/api/months/${report.month}/lock`, { locked: lock }, 'POST'));
+    renderAll();
+    toast(lock ? `${fullMonth(report.month)} locked — salaries frozen` : `${fullMonth(report.month)} unlocked`, { undo: true });
+  } catch (err) { toast(err.message, true); }
+});
+
+$('btn-delete-month').addEventListener('click', async () => {
+  const m = report.month;
+  if (!confirm(`Delete ${fullMonth(m)} from StaffPay? Its attendance, corrections, adjustments and payments are removed (you can undo straight after, or restore a backup).`)) return;
+  try {
+    applyState(await api(`/api/months/${m}`, { method: 'DELETE' }));
+    openRows.clear();
+    renderAll();
+    toast(`${fullMonth(m)} deleted`, { undo: true });
+  } catch (err) { toast(err.message, true); }
+});
+
+// ---------- Correct a day ----------
+const FIX_LABELS = { present: 'Present (full day, no fines)', half: 'Half day', absent: 'Absent (deducted)', leave: 'Paid leave (not deducted)', off: 'Weekly off / holiday (paid)' };
+function openDayFix(empId, date) {
+  const e = empById(empId);
+  const d = e?.days.find(x => x.date === date);
+  if (!d || isLocked()) return;
+  const cur = d.corrected?.status || '';
+  openModal(`<form id="day-fix">
+    <h2>${esc(e.name)} · ${esc(fmtDate(date))}</h2>
+    <p class="hint">Device reading: <b>${esc(d.corrected?.was || d.category)}</b>${d.clock_in || d.clock_out ? ` · ${esc(d.clock_in || '—')} → ${esc(d.clock_out || '—')}` : ' · no punches'}${d.status ? ` · “${esc(d.status)}”` : ''}</p>
+    <div class="fix-options">${Object.entries(FIX_LABELS).map(([k, label]) =>
+      `<label class="fix-opt"><input type="radio" name="status" value="${k}" ${cur === k ? 'checked' : ''}><span class="${dayClass({ present: {}, half: { half: 1 }, absent: { absent: 1 }, leave: { leave: 1 }, off: { off: 1 } }[k])}">${esc(label)}</span></label>`).join('')}</div>
+    <label class="field-label">Note (optional)<input class="input" name="note" maxlength="120" placeholder="e.g. Approved leave, machine was down" value="${esc(d.corrected?.note || '')}"></label>
+    <div class="modal-actions">
+      ${cur ? '<button type="button" class="btn danger-text" data-clear>Use device reading</button>' : ''}
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button class="btn primary">Save</button>
+    </div></form>`);
+  const f = $('day-fix');
+  f.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const data = Object.fromEntries(new FormData(f));
+    if (!data.status) return toast('Choose what the day should be', true);
+    closeModal();
+    editMonth({ label: `correct ${e.name} ${fmtDate(date)}`, days: { [empId]: { [date]: { status: data.status, note: data.note } } } },
+      `${fmtDate(date)} set to ${FIX_LABELS[data.status].replace(/ \(.*/, '')} for ${e.name}`);
+  });
+  f.querySelector('[data-clear]')?.addEventListener('click', () => {
+    closeModal();
+    editMonth({ label: `undo correction ${fmtDate(date)}`, days: { [empId]: { [date]: null } } }, `${fmtDate(date)} back to the device reading`);
+  });
+}
 
 // ---------- Salary rules page ----------
 const form = $('rules-form');
@@ -445,20 +743,28 @@ function renderStaff() {
   bulk.innerHTML = shiftOptions(savedShifts().some(s => s.id === keep) ? keep : savedShifts()[0].id);
 
   for (const id of [...selected]) if (!settings.staff[id]) selected.delete(id);
-  const rows = all.filter(s => (staffFilter === 'all' || s.shift_id === staffFilter)
+  $('staff-view').value = staffView;
+  if ($('staff-search').value.trim() !== staffSearch) $('staff-search').value = staffSearch;
+  const noSalary = s => s.salary === undefined || s.salary === null || s.salary === '';
+  const inView = {
+    active: s => !s.left_on, left: s => Boolean(s.left_on), all: () => true,
+    no_salary: s => !s.left_on && noSalary(s), no_bank: s => !s.left_on && !hasBank(s), no_company: s => !s.left_on && !s.company_id,
+  }[staffView] || (() => true);
+  const rows = all.filter(s => inView(s) && matches(staffSearch, s.name, s.id) && (staffFilter === 'all' || s.shift_id === staffFilter)
     && (staffCompanyFilter === 'all' || (s.company_id || '') === staffCompanyFilter));
-  $('staff-empty').classList.toggle('hidden', all.length > 0);
   $('staff-toolbar').classList.toggle('hidden', all.length === 0);
 
+  $('staff-empty').textContent = all.length ? 'No staff match.' : 'Upload an attendance sheet on the Salary page to list your staff here.';
+  $('staff-empty').classList.toggle('hidden', rows.length > 0);
   $('staff-table').tBodies[0].innerHTML = rows.map(s => {
     const e = reportEmployee(s.id);
     const monthly = s.salary ?? '';
     const r = rulesFor(s.company_id);
     const rate = (monthly === '' ? Number(r.monthly_salary) : Number(monthly)) / (Number(r.salary_divisor) || 30.5);
-    return `<tr data-id="${esc(s.id)}" class="${selected.has(s.id) ? 'selected' : ''}">
+    return `<tr data-id="${esc(s.id)}" class="${selected.has(s.id) ? 'selected' : ''} ${s.left_on ? 'has-left' : ''}">
       <td class="check"><input type="checkbox" class="pick" ${selected.has(s.id) ? 'checked' : ''} aria-label="Select ${esc(s.name)}"></td>
-      <td><div class="person"><span class="avatar">${esc(initials(s.name))}</span>
-        <div><div class="name">${esc(s.name || 'Unnamed')}</div><div class="id">#${esc(s.device_id || s.id)}${s.inSheet ? '' : ' · not in current sheet'}</div></div></div></td>
+      <td><div class="person">${avatar(s.name)}
+        <div><button class="name link-name" data-profile="${esc(s.id)}" title="Open ${esc(s.name)}'s profile">${esc(s.name || 'Unnamed')}</button><div class="id">#${esc(s.id)}${s.left_on ? ` · <span class="left-tag">left ${esc(fmtDate(s.left_on))}</span>` : s.inSheet ? '' : ' · not in current sheet'}</div></div></div></td>
       <td><select class="input" data-field="company_id" data-key="staff:${esc(s.id)}:company" aria-label="Company">${companyOptions(s.company_id, comps.length ? '— None —' : 'Add on Companies page')}</select></td>
       <td><select class="input" data-field="shift_id" data-key="staff:${esc(s.id)}:shift" aria-label="Shift">${shiftOptions(s.shift_id)}</select></td>
       <td class="num"><input class="input amount" data-field="salary" data-key="staff:${esc(s.id)}:salary" type="number" min="0" step="1"
@@ -470,6 +776,7 @@ function renderStaff() {
         inputmode="numeric" placeholder="Account number" aria-label="Account number for ${esc(s.name)}"></td>
       <td><input class="input bank-ifsc" data-field="bank_ifsc" data-key="staff:${esc(s.id)}:bank_ifsc" value="${esc(s.bank_ifsc || '')}"
         maxlength="11" placeholder="IFSC" aria-label="IFSC for ${esc(s.name)}"></td>
+      <td><input class="input left-date" data-field="left_on" data-key="staff:${esc(s.id)}:left" type="date" value="${esc(s.left_on || '')}" aria-label="Date ${esc(s.name)} left"></td>
       <td class="num">${e ? `<b>${money(e.net_salary)}</b>` : '<span class="dim">–</span>'}</td>
     </tr>`;
   }).join('');
@@ -506,6 +813,38 @@ $('staff-table').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches('input.input')) e.target.blur();
 });
 $('staff-company-filter').addEventListener('change', e => { staffCompanyFilter = e.target.value; renderStaff(); });
+$('staff-view').addEventListener('change', e => { staffView = e.target.value; renderStaff(); });
+$('staff-search').addEventListener('input', e => { staffSearch = e.target.value.trim(); renderStaff(); });
+$('staff-table').addEventListener('click', e => {
+  const b = e.target.closest('[data-profile]');
+  if (b) openProfile(b.dataset.profile);
+});
+
+// Import an edited staff Excel sheet; the reply says what changed and which rows were refused.
+$('staff-import').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const body = new FormData();
+  body.append('file', file);
+  try {
+    const res = await api('/api/staff/import', { method: 'POST', body });
+    applyState(res);
+    renderAll();
+    const r = res.import;
+    openModal(`<h2>Staff imported</h2><p class="hint">${esc(file.name)}</p>
+      <ul class="summary-list">
+        <li class="good"><span class="sum-icon">${ICON.check}</span><div><b>${r.updated} updated · ${r.added} added · ${r.unchanged} unchanged</b></div></li>
+        ${r.errors.length ? `<li class="warn"><span class="sum-icon">${ICON.alert}</span><div><b>${r.errors.length} row${r.errors.length > 1 ? 's' : ''} not imported</b>
+          <ul>${r.errors.map(x => `<li>Row ${x.row}: ${esc(x.error)}</li>`).join('')}</ul></div></li>` : ''}
+      </ul>
+      <div class="modal-actions">${r.added || r.updated ? '<button class="btn" data-undo-import>Undo import</button>' : ''}<span class="spacer"></span><button class="btn primary" data-close autofocus>Done</button></div>`, { wide: true });
+    $('modal-box').querySelector('[data-undo-import]')?.addEventListener('click', async () => {
+      closeModal();
+      try { const u = await api('/api/undo', { method: 'POST' }); applyState(u); renderAll(); toast('Import undone'); } catch (err) { toast(err.message, true); }
+    });
+  } catch (err) { toast(err.message, true); }
+});
 
 $('staff-table').addEventListener('change', e => {
   if (e.target.id === 'check-all') {
@@ -532,6 +871,10 @@ $('staff-table').addEventListener('change', e => {
     saveSettings({ staff: { [id]: { [field]: e.target.value } } });
   } else if (field?.startsWith('bank_')) {
     saveSettings({ staff: { [id]: { [field]: e.target.value } } });
+  } else if (field === 'left_on') {
+    const name = settings.staff[id]?.name || id;
+    saveSettings({ label: e.target.value ? `${name} left` : `${name} back`, staff: { [id]: { left_on: e.target.value } } },
+      e.target.value ? `${name} marked as left on ${fmtDate(e.target.value)}` : `${name} is current staff again`);
   }
 });
 
@@ -797,7 +1140,7 @@ function renderAdvances() {
   const keep = sel.value;
   const people = staffList();
   sel.innerHTML = `<option value="">Choose staff…</option>` + people.map(p =>
-    `<option value="${esc(p.id)}" ${p.id === keep ? 'selected' : ''}>${esc(p.name || p.id)} · #${esc(p.device_id || p.id)}${p.inSheet ? '' : ' (not in current sheet)'}</option>`).join('');
+    `<option value="${esc(p.id)}" ${p.id === keep ? 'selected' : ''}>${esc(p.name || p.id)} · #${esc(p.id)}${p.inSheet ? '' : ' (not in current sheet)'}</option>`).join('');
   if (!advForm.elements.date.value) advForm.elements.date.value = new Date().toLocaleDateString('en-CA');
   if (!advForm.elements.start_month.value) advForm.elements.start_month.value = defaultStartMonth();
   updatePlan();
@@ -822,8 +1165,8 @@ function renderAdvances() {
       : isCleared(a) ? '<span class="pill good">Cleared</span>' : '';
     const open = openAdvances.has(a.id);
     return `<tr data-id="${esc(a.id)}" class="adv ${isCleared(a) ? 'cleared' : ''} ${open ? 'open' : ''}">
-      <td><div class="person">${ICON.chev}<span class="avatar">${esc(initials(s.name))}</span>
-        <div><div class="name">${esc(s.name || a.emp_id)}</div><div class="id">#${esc(s.device_id || a.emp_id)}${report && !reportEmployee(a.emp_id) ? ' · not in current sheet' : ''}${a.note ? ` · ${esc(a.note)}` : ''}</div></div></div></td>
+      <td><div class="person">${ICON.chev}${avatar(s.name)}
+        <div><div class="name">${esc(s.name || a.emp_id)}</div><div class="id">#${esc(a.emp_id)}${report && !reportEmployee(a.emp_id) ? ' · not in current sheet' : ''}${a.note ? ` · ${esc(a.note)}` : ''}</div></div></div></td>
       <td>${esc(fmtDate(a.date))}<div class="id">from ${esc(fmtMonth(a.start_month))}</div></td>
       <td class="num">${money(a.amount)}</td>
       <td class="num"><input class="input amount sm" type="number" min="1" step="1" data-field="installment" data-key="adv:${esc(a.id)}:installment"
@@ -971,28 +1314,372 @@ advTable.addEventListener('click', e => {
   }
 });
 
-// ---------- Version / updates ----------
-async function checkVersion() {
-  try {
-    const v = await api('/api/version');
-    $('version').textContent = `StaffPay v${v.version}`;
-    if (v.update_available) {
-      const card = $('update-card');
-      card.href = v.download_url || v.releases_url;
-      card.title = `Download StaffPay v${v.latest}`;
-      $('update-title').textContent = `v${v.latest} is ready`;
-      card.classList.remove('hidden');
-    }
-  } catch { /* offline: ignore */ }
+// ---------- Folders ----------
+// The path inputs are only filled on load and after a save, so typing is never overwritten by renderAll.
+let folders = null;
+const DIR_INPUT = { output: 'output-dir', data: 'data-dir', backup: 'backup-dir' };
+
+function renderFolders(f) {
+  folders = f;
+  $('output-dir').value = f.output_dir;
+  $('data-dir').value = f.data_dir;
+  $('backup-dir').value = f.backup_dir;
+  $('month-dir').textContent = f.month_dir;
+  renderBackups(f.backups);
+  renderPin(Boolean(f.pin_set));
+  $('data-dir').disabled = f.data_locked;
+  document.querySelectorAll('[data-pick="data"], [data-save="data"]').forEach(b => (b.disabled = f.data_locked));
+  if (f.data_locked) $('data-hint').textContent = 'Set by the STAFFPAY_DATA_DIR environment variable.';
 }
+
+function renderBackups(list) {
+  $('backup-list').innerHTML = list.length
+    ? list.map(b => `<li><span>${esc(b.name)}<br><span class="muted">${new Date(b.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · ${Math.max(1, Math.round(b.size / 1024))} KB</span></span>
+        <button class="btn sm" data-restore="${esc(b.name)}">Restore</button></li>`).join('')
+    : '<li><span class="muted">No backups yet</span><span></span></li>';
+}
+
+$('backup-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-restore]');
+  if (!b) return;
+  if (!confirm(`Restore “${b.dataset.restore}”?\n\nYour current staff, settings and months are replaced by the ones in this backup. A backup of the current data is made first, so you can go back.`)) return;
+  try {
+    const res = await putJson('/api/backup/restore', { name: b.dataset.restore }, 'POST');
+    applyState(res);
+    renderFolders(res.folders);
+    openRows.clear();
+    renderAll();
+    toast('Backup restored');
+  } catch (err) { toast(err.message, true); }
+});
+
+async function saveFolder(which) {
+  const value = $(DIR_INPUT[which]).value.trim();
+  if (value === folders[`${which}_dir`]) return;
+  if (which === 'data' && !confirm(`Use this data folder?\n\n${value}\n\nAn empty folder gets a copy of your current data; a folder with StaffPay data in it is used as it is.`)) {
+    $('data-dir').value = folders.data_dir;
+    return;
+  }
+  try {
+    const res = await api('/api/folders', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [`${which}_dir`]: value }),
+    });
+    renderFolders(res.folders);
+    applyState(res);
+    renderAll();
+    flashSaved();
+    if (res.note) toast(res.note);
+  } catch (err) { toast(err.message, true); }
+}
+
+$('tab-settings').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-pick], button[data-save], button[data-open]');
+  if (!b) return;
+  try {
+    if (b.dataset.pick) {
+      b.disabled = true;
+      const { dir } = await api('/api/folders/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: b.dataset.pick }),
+      }).finally(() => (b.disabled = false));
+      if (dir) { $(DIR_INPUT[b.dataset.pick]).value = dir; await saveFolder(b.dataset.pick); }
+    }
+    if (b.dataset.save) await saveFolder(b.dataset.save);
+    if (b.dataset.open) await api('/api/folders/open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: b.dataset.open }),
+    });
+  } catch (err) { toast(err.message, true); }
+});
+Object.entries(DIR_INPUT).forEach(([which, id]) => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') saveFolder(which); }));
+
+$('btn-save-slips').addEventListener('click', async () => {
+  const b = $('btn-save-slips');
+  b.disabled = true;
+  try {
+    const { dir, count } = await api('/api/slips/save', { method: 'POST' });
+    toast(`Saved ${count} slip${count === 1 ? '' : 's'} to ${dir}`);
+    api('/api/folders/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'month' }) }).catch(() => {});
+  } catch (err) { toast(err.message, true); } finally { b.disabled = false; }
+});
+
+// ---------- Employee profile ----------
+async function openProfile(id) {
+  let p;
+  try { p = await api(`/api/staff/${encodeURIComponent(id)}/profile`); } catch (err) { return toast(err.message, true); }
+  const s = p.staff;
+  const r = rulesFor(s.company_id);
+  const monthly = s.salary ?? r.monthly_salary;
+  const hist = p.history;
+  const max = Math.max(1, ...hist.map(h => h.net));
+  const avg = hist.length ? Math.round(hist.reduce((a, h) => a + h.net, 0) / hist.length) : 0;
+  openModal(`<div class="profile-head">${avatar(s.name)}
+      <div><h2>${esc(s.name || 'Unnamed')}</h2>
+        <div class="hint">#${esc(p.id)}${s.device_id ? ` · device ID ${esc(s.device_id)}` : ''}${s.left_on ? ` · <span class="left-tag">left ${esc(fmtDate(s.left_on))}</span>` : ''}</div></div>
+      <button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
+    <div class="profile-facts">
+      <div><span>Company</span><b>${esc(p.company || '—')}</b></div>
+      <div><span>Shift</span><b>${esc(p.shift ? `${p.shift.name} (${p.shift.login_time}–${p.shift.logout_time})` : '—')}</b></div>
+      <div><span>Monthly salary</span><b>${money(monthly)}${s.salary == null ? ' <span class="default-note">default</span>' : ''}</b></div>
+      <div><span>Bank</span><b>${s.bank_account_number ? `${esc(s.bank_account_number)} · ${esc(s.bank_ifsc || 'no IFSC')}` : '—'}</b></div>
+      <div><span>Average net (${hist.length} month${hist.length === 1 ? '' : 's'})</span><b>${money(avg)}</b></div>
+    </div>
+    <div class="group-title">Month by month</div>
+    ${hist.length ? `<div class="table-wrap"><table class="table compact"><thead><tr><th>Month</th><th class="num">Worked</th><th class="num">Absent</th>
+      <th class="num">Late</th><th class="num">Overtime</th><th class="num">Adjust.</th><th>Net</th><th>Paid</th></tr></thead><tbody>
+      ${hist.map(h => `<tr><td>${esc(fullMonth(h.month))}${h.locked ? ' 🔒' : ''}</td><td class="num">${h.present}${h.leave_days ? ` <span class="leave-note">+${h.leave_days}L</span>` : ''}</td>
+        <td class="num">${h.absences}</td><td class="num">${h.late}</td><td class="num">${h.overtime_minutes ? fmtHours(h.overtime_minutes) : '–'}</td>
+        <td class="num ${h.extra > 0 ? 'pos' : h.extra < 0 ? 'neg' : 'dim'}">${h.extra ? signed(h.extra) : '–'}</td>
+        <td><div class="bar-cell"><i style="width:${Math.round((h.net / max) * 100)}%"></i><b>${money(h.net)}</b></div></td>
+        <td>${h.paid_on ? `<span class="pill good">✓ ${esc(fmtDate(h.paid_on))}</span>` : '<span class="dim">–</span>'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="hint">Not in any saved month yet.</p>'}
+    <div class="group-title">Advances</div>
+    ${p.advances.length ? `<ul class="adv-mini">${p.advances.map(a => `<li><b>${money(a.amount)}</b> given ${esc(fmtDate(a.date))}${a.note ? ` · ${esc(a.note)}` : ''}
+      <span class="${a.balance ? '' : 'pos'}">${a.balance ? `${money(a.balance)} left · ${money(a.installment)}/month` : 'repaid'}</span></li>`).join('')}</ul>` : '<p class="hint">No advances.</p>'}
+    <div class="modal-actions"><button class="btn" data-go-staff>Edit on Staff page</button><span class="spacer"></span><button class="btn primary" data-close>Close</button></div>`, { wide: true });
+  $('modal-box').querySelector('[data-go-staff]').addEventListener('click', () => {
+    closeModal();
+    staffSearch = s.name || p.id; staffView = s.left_on ? 'left' : 'active'; staffFilter = 'all'; staffCompanyFilter = 'all';
+    renderStaff();
+    setTab('staff');
+  });
+}
+
+// ---------- Reports ----------
+let reportsScope = 'month';
+let reportsData = null;
+async function loadReports() {
+  try { reportsData = await api('/api/reports'); renderReports(); } catch (err) {
+    $('reports-body').innerHTML = `<p class="empty panel">${esc(err.message)}</p>`;
+  }
+}
+function renderReports() {
+  const d = reportsData;
+  if (!d) return;
+  if (!d.months.length) { $('reports-body').innerHTML = '<p class="empty panel">Upload an attendance sheet to see reports.</p>'; return; }
+  const max = Math.max(1, ...d.months.map(m => m.net));
+  const companies = [...new Set(d.months.flatMap(m => Object.keys(m.by_company)))].sort();
+  const people = reportsScope === 'month' ? d.people_month : d.people_all;
+  const top = (key, label, fmt = x => x, tone = '') => {
+    const list = people.filter(p => p[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, 6);
+    const hi = Math.max(1, ...list.map(p => p[key]));
+    return `<div class="rule-card report-card"><div class="group-title">${label}</div>
+      ${list.length ? `<ol class="top-list">${list.map(p => `<li><button class="link-name" data-profile="${esc(p.id)}">${esc(p.name)}</button>
+        <div class="bar-cell ${tone}"><i style="width:${Math.round((p[key] / hi) * 100)}%"></i><b>${fmt(p[key])}</b></div></li>`).join('')}</ol>` : '<p class="hint">Nobody.</p>'}</div>`;
+  };
+  const last = d.months.at(-1), prev = d.months.at(-2);
+  const change = prev ? last.net - prev.net : 0;
+  $('reports-body').innerHTML = `
+    <div class="stats report-stats">
+      <div class="stat pay"><div class="top"><span class="label">Net salary · ${esc(fullMonth(last.month))}</span><span class="chip">${ICON.wallet}</span></div><div class="value">${money(last.net)}</div>
+        ${prev ? `<div class="stat-sub ${change > 0 ? 'neg' : 'pos'}">${change ? `${signed(change)} vs ${esc(fmtMonth(prev.month))}` : `same as ${esc(fmtMonth(prev.month))}`}</div>` : ''}</div>
+      <div class="stat ded"><div class="top"><span class="label">Absences · ${esc(fmtMonth(last.month))}</span><span class="chip">${ICON.minus}</span></div><div class="value">${last.absences}</div></div>
+      <div class="stat fine"><div class="top"><span class="label">Late arrivals · ${esc(fmtMonth(last.month))}</span><span class="chip">${ICON.alert}</span></div><div class="value">${last.late}</div></div>
+      <div class="stat ot"><div class="top"><span class="label">Overtime · ${esc(fmtMonth(last.month))}</span><span class="chip">${ICON.clock}</span></div><div class="value">${fmtHours(last.overtime_minutes || 0)}</div></div>
+    </div>
+    <div class="panel report-panel">
+      <div class="panel-head"><h2>Net salary by month</h2><span class="muted small">${d.months.length} month${d.months.length > 1 ? 's' : ''} saved</span></div>
+      <div class="month-bars">${d.months.map(m => `<div class="mbar" title="${esc(fullMonth(m.month))}: ${money(m.net)}">
+        <span class="mbar-val">${money(m.net)}</span><div class="mbar-track"><i style="height:${Math.max(3, Math.round((m.net / max) * 100))}%"></i></div>
+        <span class="mbar-label">${esc(fmtMonth(m.month))}${m.locked ? ' 🔒' : ''}</span></div>`).join('')}</div>
+      <div class="table-wrap"><table class="table compact"><thead><tr><th>Month</th>${companies.map(c => `<th class="num">${esc(c)}</th>`).join('')}
+        <th class="num">Deductions</th><th class="num">Fines</th><th class="num">Overtime</th><th class="num">Adjust.</th><th class="num">Total net</th><th class="num">Paid</th></tr></thead>
+        <tbody>${[...d.months].reverse().map(m => `<tr><td>${esc(fullMonth(m.month))}${m.locked ? ' 🔒' : ''}</td>
+          ${companies.map(c => `<td class="num">${m.by_company[c] ? money(m.by_company[c]) : '<span class="dim">–</span>'}</td>`).join('')}
+          <td class="num neg">${m.attendance_deduction ? '−' + money(m.attendance_deduction) : '–'}</td><td class="num neg">${m.fines ? '−' + money(m.fines) : '–'}</td>
+          <td class="num pos">${m.overtime ? '+' + money(m.overtime) : '–'}</td><td class="num">${m.extra_earnings - m.extra_deductions ? signed(m.extra_earnings - m.extra_deductions) : '–'}</td>
+          <td class="num"><b>${money(m.net)}</b></td><td class="num">${m.paid_count}/${m.employees}</td></tr>`).join('')}</tbody></table></div>
+    </div>
+    <div class="report-scope"><div class="segmented" id="reports-scope">
+      <button data-scope="month" class="${reportsScope === 'month' ? 'active' : ''}">${esc(fullMonth(activeMonth || last.month))}</button>
+      <button data-scope="all" class="${reportsScope === 'all' ? 'active' : ''}">All months</button></div></div>
+    <div class="report-grid">
+      ${top('absences', 'Most absences', x => `${x} day${x === 1 ? '' : 's'}`, 'rose')}
+      ${top('late', 'Most often late', x => `${x}×`, 'amber')}
+      ${top('half_days', 'Most half days', x => `${x}`, 'blue')}
+      ${top('overtime_minutes', 'Most overtime', x => fmtHours(x), 'green')}
+    </div>`;
+}
+$('reports-body').addEventListener('click', e => {
+  const sc = e.target.closest('[data-scope]');
+  if (sc) { reportsScope = sc.dataset.scope; return renderReports(); }
+  const p = e.target.closest('[data-profile]');
+  if (p) openProfile(p.dataset.profile);
+});
+
+// ---------- PIN lock ----------
+let pinSet = false;
+function showLock() {
+  $('lock-screen').classList.remove('hidden');
+  $('lock-error').textContent = '';
+  $('lock-pin').value = '';
+  setTimeout(() => $('lock-pin').focus(), 50);
+}
+$('lock-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await putJson('/api/auth/unlock', { pin: $('lock-pin').value }, 'POST');
+    $('lock-screen').classList.add('hidden');
+    applyState(await api('/api/state'));
+    renderAll();
+    renderFolders(await api('/api/folders'));
+  } catch (err) {
+    $('lock-error').textContent = err.message;
+    $('lock-pin').select();
+  }
+});
+$('btn-lock').addEventListener('click', async () => {
+  await api('/api/auth/lock', { method: 'POST' }).catch(() => {});
+  closeModal();
+  showLock();
+});
+
+function renderPin(set) {
+  pinSet = set;
+  $('btn-lock').classList.toggle('hidden', !set);
+  $('pin-status').textContent = set ? 'A PIN is set — StaffPay asks for it when opened.' : 'No PIN — anyone at this computer can open StaffPay.';
+  $('pin-current-row').classList.toggle('hidden', !set);
+  $('btn-pin-remove').classList.toggle('hidden', !set);
+  $('btn-pin-save').textContent = set ? 'Change PIN' : 'Set PIN';
+  $('pin-current').value = '';
+  $('pin-new').value = '';
+}
+async function savePin(remove) {
+  const body = { current: $('pin-current').value, pin: remove ? '' : $('pin-new').value.trim() };
+  if (!remove && !/^\d{4,8}$/.test(body.pin)) return toast('PIN must be 4 to 8 digits', true);
+  if (remove && !confirm('Remove the PIN? Anyone at this computer will be able to open StaffPay.')) return;
+  try {
+    const res = await putJson('/api/auth/pin', body);
+    renderPin(res.pin_set);
+    toast(res.pin_set ? 'PIN saved — keep it safe' : 'PIN removed');
+  } catch (err) { toast(err.message, true); }
+}
+$('btn-pin-save').addEventListener('click', () => savePin(false));
+$('btn-pin-remove').addEventListener('click', () => savePin(true));
+
+// ---------- Version / updates / backup ----------
+const fmtTime = iso => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+let appVersion = '';
+
+function renderVersion(v) {
+  appVersion = v.version;
+  $('version').textContent = `StaffPay v${v.version}`;
+  $('app-version').textContent = `StaffPay v${v.version}`;
+  $('auto-update').checked = v.auto_update;
+  $('auto-update-row').classList.toggle('hidden', !v.can_self_update);
+  $('no-self-update').classList.toggle('hidden', v.can_self_update);
+  const available = v.update_available;
+  $('btn-update-now').classList.toggle('hidden', !available || !v.can_self_update);
+  $('btn-download-update').classList.toggle('hidden', !available || v.can_self_update);
+  $('btn-download-update').href = v.download_url || v.releases_url || '#';
+  $('settings-badge').classList.toggle('hidden', !available);
+  $('update-status').textContent = available ? `Version ${v.latest} is available.`
+    : v.latest ? `You have the latest version${v.checked_at ? ` (checked ${fmtTime(v.checked_at)})` : ''}.`
+      : 'Could not check for updates (offline?).';
+  const card = $('update-card');
+  card.classList.toggle('hidden', !available);
+  if (available) {
+    card.href = v.can_self_update ? '#settings' : (v.download_url || v.releases_url);
+    card.target = v.can_self_update ? '' : '_blank';
+    card.title = `StaffPay v${v.latest}`;
+    $('update-title').textContent = `v${v.latest} is ready`;
+    card.querySelector('.update-link').textContent = v.can_self_update ? 'Update now →' : 'Download installer →';
+  }
+  renderUpdate(v.update);
+}
+
+// Download progress in the card; the overlay only while installing (the app restarts) or when "Update now" was clicked.
+let updateRequested = false;
+function renderUpdate(u) {
+  const busy = u.status === 'downloading' || u.status === 'installing';
+  $('update-progress').classList.toggle('hidden', u.status !== 'downloading');
+  $('update-progress').firstElementChild.style.width = `${Math.round((u.progress || 0) * 100)}%`;
+  if (u.status === 'downloading') $('update-status').textContent = `Downloading version ${u.version}… ${Math.round((u.progress || 0) * 100)}%`;
+  if (u.status === 'ready') $('update-status').textContent = `Version ${u.version} is downloaded and installs after 5 minutes without use.`;
+  if (u.status === 'error') $('update-status').textContent = `Update failed: ${u.error}`;
+  $('btn-update-now').disabled = busy;
+  const overlay = u.status === 'installing' || (updateRequested && busy);
+  $('update-overlay').classList.toggle('hidden', !overlay);
+  if (overlay) {
+    $('overlay-title').textContent = `Updating StaffPay to v${u.version}…`;
+    $('overlay-text').textContent = u.status === 'installing' ? 'Installing — StaffPay restarts and this page reloads by itself.'
+      : `Downloading the new version… ${Math.round((u.progress || 0) * 100)}%`;
+  }
+  if (u.status === 'error' && updateRequested) { updateRequested = false; toast(`Update failed: ${u.error}`, true); }
+  if (u.status === 'installing') waitForRestart();
+}
+
+// After installing, the server goes away and comes back as the new version: reload then.
+let waiting = false;
+async function waitForRestart() {
+  if (waiting) return;
+  waiting = true;
+  const old = appVersion;
+  for (;;) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const v = await api('/api/version');
+      if (v.version !== old) { location.reload(); return; }
+    } catch { /* restarting */ }
+  }
+}
+
+async function checkVersion(force = false) {
+  try { renderVersion(await api(`/api/version${force ? '?force=1' : ''}`)); } catch { /* offline: ignore */ }
+}
+
+// Poll the update status: quickly while something is happening, otherwise every 30 s (catches automatic installs).
+(function pollUpdate() {
+  api('/api/update').then(u => {
+    renderUpdate(u);
+    if (u.status === 'ready' && $('btn-update-now').classList.contains('hidden')) checkVersion();
+    setTimeout(pollUpdate, u.status === 'downloading' || u.status === 'installing' || updateRequested ? 1000 : 30000);
+  }).catch(() => setTimeout(pollUpdate, 30000));
+})();
+
+$('btn-check-update').addEventListener('click', async () => {
+  const b = $('btn-check-update');
+  b.disabled = true;
+  $('update-status').textContent = 'Checking for updates…';
+  await checkVersion(true);
+  b.disabled = false;
+});
+
+$('btn-update-now').addEventListener('click', async () => {
+  if (!confirm('Install the new version now? StaffPay backs up your data, restarts, and this page reloads.')) return;
+  try {
+    updateRequested = true;
+    renderUpdate(await api('/api/update', { method: 'POST' }));
+  } catch (err) { updateRequested = false; toast(err.message, true); checkVersion(); }
+});
+
+$('auto-update').addEventListener('change', async e => {
+  try {
+    renderVersion(await api('/api/app', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto_update: e.target.checked }),
+    }));
+    flashSaved();
+  } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+});
+
+$('btn-backup-now').addEventListener('click', async () => {
+  const b = $('btn-backup-now');
+  b.disabled = true;
+  try {
+    const res = await api('/api/backup', { method: 'POST' });
+    renderBackups(res.folders.backups);
+    toast(`Backup saved: ${res.file}`);
+  } catch (err) { toast(err.message, true); } finally { b.disabled = false; }
+});
 
 // ---------- Start ----------
 checkVersion();
 (async function init() {
   try {
+    const a = await api('/api/auth');
+    if (!a.unlocked) return showLock();
     applyState(await api('/api/state'));
     renderAll();
+    renderFolders(await api('/api/folders'));
   } catch (e) {
-    toast(e.message, true);
+    if (e.status !== 401) toast(e.message, true);
   }
 })();

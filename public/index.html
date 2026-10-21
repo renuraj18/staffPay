@@ -39,6 +39,14 @@
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2c-.5-.9-1.6-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2.1 0 2.9 5.8 1.5 5.8 4.3 0 1.3-1.3 2.1-3 2.1-1.3 0-2.4-.6-2.9-1.5M12 6v1.8M12 16.3V18"/></svg>
           <span>Advances</span><span class="badge" id="advance-count"></span>
         </button>
+        <button data-tab="reports">
+          <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+          <span>Reports</span>
+        </button>
+        <button data-tab="settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          <span>Settings</span><span class="badge accent hidden" id="settings-badge">1</span>
+        </button>
       </nav>
       <div class="sidebar-foot">
       <a class="update-card hidden" id="update-card" target="_blank" rel="noopener">
@@ -56,6 +64,10 @@
           Upload new sheet
         </button>
       </div>
+      <button class="btn ghost block lock-btn hidden" id="btn-lock" title="Lock StaffPay (PIN needed to open)">
+        <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        Lock
+      </button>
       <div class="version" id="version"></div>
       </div>
     </aside>
@@ -85,6 +97,14 @@
               <svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="M13 11v6"/><path d="m10.5 14.5 2.5 2.5 2.5-2.5"/></svg>
               Download all slips (PDF)
             </a>
+            <a class="btn" id="btn-print-slips" target="_blank" rel="noopener" title="All slips in one PDF, ready to print">
+              <svg viewBox="0 0 24 24"><path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="9" rx="2"/><path d="M7 14h10v7H7z"/></svg>
+              Print slips
+            </a>
+            <button class="btn" id="btn-save-slips" title="Save every slip as a PDF in the output folder, in a year / month folder">
+              <svg viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.5h8.5A1.5 1.5 0 0 1 21 10v8.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M12 11v5"/><path d="m9.5 13.5 2.5 2.5 2.5-2.5"/></svg>
+              Save slips to folder
+            </button>
           </div>
         </header>
 
@@ -104,34 +124,50 @@
         </div>
 
         <div id="report-view" class="hidden">
+          <div class="month-bar" id="month-bar">
+            <label class="month-pick"><span class="sr">Month</span>
+              <select class="input" id="month-select" aria-label="Month"></select></label>
+            <span class="lock-badge hidden" id="lock-badge"></span>
+            <div class="month-actions">
+              <button class="btn sm" id="btn-lock-month"></button>
+              <button class="btn sm danger-text" id="btn-delete-month">Delete month</button>
+            </div>
+          </div>
+          <div class="locked-note hidden" id="locked-note"></div>
+          <div class="checklist hidden" id="checklist"></div>
           <div class="warnings hidden" id="warnings"></div>
           <div class="stats" id="stats"></div>
           <div class="panel">
             <div class="panel-head">
               <h2>Employees</h2>
               <div class="segmented hidden" id="salary-company-filter"></div>
-              <span class="muted small">Click a row for day-by-day attendance</span>
+              <div class="panel-tools">
+                <input class="input search" id="salary-search" type="search" placeholder="Search name or ID" aria-label="Search employees">
+                <button class="btn sm" id="btn-mark-paid" title="Mark everyone shown as paid today">Mark shown as paid</button>
+              </div>
             </div>
             <div class="table-wrap">
               <table class="table" id="salary-table">
                 <thead>
                   <tr>
-                    <th>Employee</th>
-                    <th>Shift</th>
-                    <th>Company</th>
-                    <th class="num">Monthly</th>
-                    <th class="num" title="Present + Late days">Worked</th>
-                    <th class="num">Half</th>
-                    <th class="num" title="Full absences (excess beyond allowance in brackets)">Absent</th>
-                    <th class="num">Off</th>
-                    <th class="num">Late</th>
-                    <th class="num" title="Missing Clock In or Clock Out">Missing</th>
-                    <th class="num">Deduction</th>
-                    <th class="num">Fines</th>
-                    <th class="num" title="Advance recovered this month">Advance</th>
-                    <th class="num" title="Overtime incentive for extra hours">Incentive</th>
-                    <th class="num">Net salary</th>
-                    <th class="num" title="Download this employee's salary slip (PDF)"><span class="sr">Slip</span></th>
+                    <th data-sort="name">Employee</th>
+                    <th data-sort="shift_name">Shift</th>
+                    <th data-sort="company_name">Company</th>
+                    <th class="num" data-sort="monthly_salary">Monthly</th>
+                    <th class="num" data-sort="present_days" title="Present + Late days">Worked</th>
+                    <th class="num" data-sort="half_days">Half</th>
+                    <th class="num" data-sort="absences" title="Full absences (excess beyond allowance in brackets)">Absent</th>
+                    <th class="num" data-sort="off_days">Off</th>
+                    <th class="num" data-sort="late_arrivals">Late</th>
+                    <th class="num" data-sort="missing_punches" title="Missing Clock In or Clock Out">Missing</th>
+                    <th class="num" data-sort="attendance_deduction">Deduction</th>
+                    <th class="num" data-sort="total_fines">Fines</th>
+                    <th class="num" data-sort="advance_deduction" title="Advance recovered this month">Advance</th>
+                    <th class="num" data-sort="overtime_incentive" title="Overtime incentive for extra hours">Incentive</th>
+                    <th class="num" data-sort="adjust" title="Bonuses / allowances minus other deductions">Adjust.</th>
+                    <th class="num" data-sort="net_salary">Net salary</th>
+                    <th data-sort="paid_on">Paid</th>
+                    <th class="num"><span class="sr">Slip</span></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -147,13 +183,30 @@
         <header class="page-head">
           <div>
             <h1>Staff</h1>
-            <p class="sub">Enter each employee's company, monthly salary, shift and bank account (used for the bank transfer sheet). Daily rate = monthly ÷ <span data-divisor>30.5</span>. Leave blank to use the default monthly salary. Changes save automatically.</p>
+            <p class="sub">Enter each employee's company, monthly salary, shift and bank account (used for the bank transfer sheet). Daily rate = monthly ÷ <span data-divisor>30.5</span>. Leave blank to use the default monthly salary. Changes save automatically. Click a name for their profile.</p>
           </div>
-          <span class="saved" data-saved></span>
+          <div class="head-actions">
+            <span class="saved" data-saved></span>
+            <a class="btn" href="/api/staff.xlsx" title="Every staff record in an Excel sheet you can edit and import back">
+              <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+              Export to Excel</a>
+            <label class="btn" title="Update staff from an edited staff Excel sheet">
+              <svg viewBox="0 0 24 24"><path d="M12 16V5"/><path d="m7 10 5-5 5 5"/><path d="M5 19h14"/></svg>
+              Import from Excel<input type="file" id="staff-import" accept=".xlsx,.xls" hidden></label>
+          </div>
         </header>
         <div class="panel">
           <div class="toolbar" id="staff-toolbar">
             <div class="filters">
+              <input class="input search" id="staff-search" type="search" placeholder="Search name or ID" aria-label="Search staff">
+              <select class="input" id="staff-view" aria-label="Which staff to show">
+                <option value="active">Current staff</option>
+                <option value="left">Left</option>
+                <option value="all">Everyone</option>
+                <option value="no_salary">Missing salary</option>
+                <option value="no_bank">Missing bank details</option>
+                <option value="no_company">No company</option>
+              </select>
               <div class="segmented" id="staff-filter"></div>
               <select class="input" id="staff-company-filter" aria-label="Filter by company"></select>
             </div>
@@ -178,6 +231,7 @@
                   <th title="Name on the bank account (blank = employee name)">Account holder</th>
                   <th>Account number</th>
                   <th>IFSC</th>
+                  <th title="Date they left — blank while they work here">Left on</th>
                   <th class="num">Net (this sheet)</th>
                 </tr>
               </thead>
@@ -225,6 +279,126 @@
         </header>
         <div class="shift-grid" id="shift-grid"></div>
       </section>
+
+      <!-- ================= Reports ================= -->
+      <section id="tab-reports" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Reports</h1>
+            <p class="sub">Salary cost month by month and per company, and who is most often absent, late or working overtime.</p>
+          </div>
+        </header>
+        <div id="reports-body"><p class="empty panel">Loading…</p></div>
+      </section>
+
+      <!-- ================= Settings ================= -->
+      <section id="tab-settings" class="tab hidden">
+        <header class="page-head">
+          <div>
+            <h1>Settings</h1>
+            <p class="sub">App version and updates, where StaffPay keeps its data and payslips, and backups.</p>
+          </div>
+          <span class="saved" data-saved></span>
+        </header>
+        <div class="form settings-grid">
+          <div class="form-group rule-card">
+            <div class="group-title">App version</div>
+            <div class="version-row">
+              <div>
+                <div class="version-big" id="app-version">StaffPay</div>
+                <div class="hint" id="update-status">Checking for updates…</div>
+              </div>
+              <div class="folder-actions">
+                <button class="btn" type="button" id="btn-check-update">Check for updates</button>
+                <button class="btn primary hidden" type="button" id="btn-update-now">Update now</button>
+                <a class="btn primary hidden" id="btn-download-update" target="_blank" rel="noopener">Download installer</a>
+              </div>
+            </div>
+            <div class="progress-bar hidden" id="update-progress"><span></span></div>
+            <label class="check-row" id="auto-update-row"><input type="checkbox" id="auto-update">
+              <span>Install updates automatically<span class="hint">StaffPay checks for a new version every 30 minutes, downloads it as soon as it is released, and installs it after 5 minutes without use. Your data is backed up first.</span></span></label>
+            <p class="hint hidden" id="no-self-update">This copy wasn't installed with StaffPay-Setup.exe (portable or developer copy), so it can't update itself — use Download installer.</p>
+          </div>
+
+          <div class="form-group rule-card">
+            <div class="group-title">Backup</div>
+            <label>Backup folder<div class="folder-row">
+              <input class="input" id="backup-dir" spellcheck="false" autocomplete="off">
+              <button class="btn" type="button" data-pick="backup">Browse…</button>
+            </div></label>
+            <p class="hint">Each backup is one ZIP file with your folder settings (config) and data: staff, salaries, companies, advances and the current sheet. A backup is also made automatically before every update and before changing the data folder.</p>
+            <div class="folder-actions">
+              <button class="btn primary" type="button" id="btn-backup-now">Back up now</button>
+              <button class="btn" type="button" data-save="backup">Save folder</button>
+              <button class="btn ghost" type="button" data-open="backup">Open folder</button>
+            </div>
+            <ul class="backup-list" id="backup-list"></ul>
+          </div>
+
+          <div class="form-group rule-card">
+            <div class="group-title">Security</div>
+            <p class="hint" id="pin-status">No PIN — anyone at this computer can open StaffPay.</p>
+            <div class="pin-grid">
+              <label class="hidden" id="pin-current-row">Current PIN<input class="input" id="pin-current" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+              <label>New PIN <span class="hint">(4–8 digits)</span><input class="input" id="pin-new" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+            </div>
+            <div class="folder-actions">
+              <button class="btn primary" type="button" id="btn-pin-save">Set PIN</button>
+              <button class="btn danger-text hidden" type="button" id="btn-pin-remove">Remove PIN</button>
+            </div>
+            <p class="hint">With a PIN, StaffPay asks for it when opened and locks itself after 30 minutes without use. Forgot it? Close StaffPay, delete the "pin" entry from config.json (next to the data folder) and start it again.</p>
+          </div>
+
+          <div class="form-group rule-card">
+            <div class="group-title">Output folder (payslips)</div>
+            <label>Folder<div class="folder-row">
+              <input class="input" id="output-dir" spellcheck="false" autocomplete="off">
+              <button class="btn" type="button" data-pick="output">Browse…</button>
+            </div></label>
+            <p class="hint">"Save slips to folder" on the Salary page puts each month's slips in a year and month folder: <code id="month-dir"></code></p>
+            <div class="folder-actions">
+              <button class="btn primary" type="button" data-save="output">Save</button>
+              <button class="btn ghost" type="button" data-open="output">Open folder</button>
+            </div>
+          </div>
+
+          <div class="form-group rule-card">
+            <div class="group-title">Data folder</div>
+            <label>Folder<div class="folder-row">
+              <input class="input" id="data-dir" spellcheck="false" autocomplete="off">
+              <button class="btn" type="button" data-pick="data">Browse…</button>
+            </div></label>
+            <p class="hint" id="data-hint">Where StaffPay keeps staff, salaries, companies, advances and the current sheet. Choosing an empty folder copies your data there; a folder with StaffPay data in it is used as it is. The old folder is not deleted.</p>
+            <div class="folder-actions">
+              <button class="btn primary" type="button" data-save="data">Save</button>
+              <button class="btn ghost" type="button" data-open="data">Open folder</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="modal hidden" id="modal" role="dialog" aria-modal="true">
+        <div class="modal-box" id="modal-box"></div>
+      </div>
+
+      <div class="lock-screen hidden" id="lock-screen">
+        <form class="lock-box" id="lock-form">
+          <span class="logo">₹</span>
+          <h2>StaffPay is locked</h2>
+          <p class="hint">Enter your PIN to continue.</p>
+          <input class="input pin-input" id="lock-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" aria-label="PIN">
+          <p class="lock-error" id="lock-error"></p>
+          <button class="btn primary block" type="submit">Unlock</button>
+        </form>
+      </div>
+
+      <div class="update-overlay hidden" id="update-overlay">
+        <div class="update-box">
+          <span class="spinner"></span>
+          <h2 id="overlay-title">Updating StaffPay…</h2>
+          <p class="hint" id="overlay-text">Downloading the new version.</p>
+        </div>
+      </div>
 
       <!-- ================= Advances ================= -->
       <section id="tab-advances" class="tab hidden">
