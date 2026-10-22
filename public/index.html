@@ -183,7 +183,7 @@
         <header class="page-head">
           <div>
             <h1>Staff</h1>
-            <p class="sub">Enter each employee's company, monthly salary, shift and bank account (used for the bank transfer sheet). Daily rate = monthly ÷ <span data-divisor>30.5</span>. Leave blank to use the default monthly salary. Changes save automatically. Click a name for their profile.</p>
+            <p class="sub">Click a person to edit their company, salary, shift and bank account. Changes save automatically.</p>
           </div>
           <div class="head-actions">
             <span class="saved" data-saved></span>
@@ -195,28 +195,15 @@
               Import from Excel<input type="file" id="staff-import" accept=".xlsx,.xls" hidden></label>
           </div>
         </header>
+        <div class="staff-cards" id="staff-cards"></div>
         <div class="panel">
           <div class="toolbar" id="staff-toolbar">
             <div class="filters">
               <input class="input search" id="staff-search" type="search" placeholder="Search name or ID" aria-label="Search staff">
-              <select class="input" id="staff-view" aria-label="Which staff to show">
-                <option value="active">Current staff</option>
-                <option value="left">Left</option>
-                <option value="all">Everyone</option>
-                <option value="no_salary">Missing salary</option>
-                <option value="no_bank">Missing bank details</option>
-                <option value="no_company">No company</option>
-              </select>
-              <div class="segmented" id="staff-filter"></div>
+              <div class="segmented" id="staff-filter" aria-label="Shift"></div>
               <select class="input" id="staff-company-filter" aria-label="Filter by company"></select>
             </div>
-            <div class="bulk">
-              <span class="muted small" id="selected-count">0 selected</span>
-              <select class="input" id="bulk-company" aria-label="Company for selected staff"></select>
-              <button class="btn" id="btn-bulk-company" disabled>Set company</button>
-              <select class="input" id="bulk-shift" aria-label="Shift for selected staff"></select>
-              <button class="btn" id="btn-bulk-shift" disabled>Move to shift</button>
-            </div>
+            <span class="muted small" id="staff-shown"></span>
           </div>
           <div class="table-wrap">
             <table class="table" id="staff-table">
@@ -226,19 +213,24 @@
                   <th>Employee</th>
                   <th>Company</th>
                   <th>Shift</th>
-                  <th class="num" title="Leave blank to use the default monthly salary (Salary rules)">Monthly salary (₹)</th>
-                  <th class="num">Daily rate</th>
-                  <th title="Name on the bank account (blank = employee name)">Account holder</th>
-                  <th>Account number</th>
-                  <th>IFSC</th>
-                  <th title="Date they left — blank while they work here">Left on</th>
-                  <th class="num">Net (this sheet)</th>
+                  <th class="num">Monthly salary</th>
+                  <th>Bank account</th>
+                  <th class="num">Net this month</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody></tbody>
             </table>
           </div>
           <p class="empty hidden" id="staff-empty">Upload an attendance sheet on the Salary page to list your staff here.</p>
+        </div>
+        <div class="bulk-bar hidden" id="staff-bulk" role="region" aria-label="Change selected staff">
+          <b id="selected-count">0 selected</b>
+          <select class="input" id="bulk-company" aria-label="Company for selected staff"></select>
+          <button class="btn" id="btn-bulk-company">Set company</button>
+          <select class="input" id="bulk-shift" aria-label="Shift for selected staff"></select>
+          <button class="btn" id="btn-bulk-shift">Move to shift</button>
+          <button class="icon-btn" id="btn-bulk-clear" aria-label="Clear selection" title="Clear selection"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
         </div>
       </section>
 
@@ -376,6 +368,12 @@
           </div>
         </div>
       </section>
+
+      <div class="drawer-scrim hidden" id="drawer-scrim"></div>
+      <aside class="drawer hidden" id="staff-drawer" aria-label="Employee details">
+        <div id="drawer-body"></div>
+        <div id="drawer-history"></div>
+      </aside>
 
       <div class="modal hidden" id="modal" role="dialog" aria-modal="true">
         <div class="modal-box" id="modal-box"></div>

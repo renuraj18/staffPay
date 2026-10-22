@@ -708,6 +708,7 @@ $('rules-own').addEventListener('change', e => {
 form.addEventListener('submit', e => e.preventDefault());
 
 // ---------- Staff page ----------
+// A read-only list (one row per person, what's missing at a glance) and a side panel to edit one person.
 const shiftOptions = current => savedShifts().map(s =>
   `<option value="${esc(s.id)}" ${s.id === current ? 'selected' : ''}>${esc(s.name)} · ${esc(s.login_time)}–${esc(s.logout_time)}</option>`).join('');
 
@@ -718,15 +719,52 @@ function staffList() {
     .sort((a, b) => (b.inSheet - a.inSheet) || a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
 
+const noSalary = s => s.salary === undefined || s.salary === null || s.salary === '';
+// [view, label, hint, icon, tone, test]; the problem views only count current staff.
+const STAFF_VIEWS = [
+  ['active', 'Current staff', 'working now', ICON.people, 'violet', s => !s.left_on],
+  ['no_salary', 'No salary', 'using the default', ICON.rupee, 'amber', s => !s.left_on && noSalary(s)],
+  ['no_bank', 'No bank details', 'for bank transfer', ICON.bank, 'orange', s => !s.left_on && !hasBank(s)],
+  ['no_company', 'No company', 'not in a firm', ICON.building, 'rose', s => !s.left_on && !s.company_id],
+  ['left', 'Left', 'no longer here', ICON.x, 'slate', s => Boolean(s.left_on)],
+  ['all', 'Everyone', 'current + left', ICON.people, 'blue', () => true],
+];
+const PROBLEM_VIEWS = new Set(['no_salary', 'no_bank', 'no_company']);
+let staffRows = [];   // ids in the order shown (for the panel's previous / next)
+
+function renderStaffCards(all) {
+  const comps = companyList().length;
+  $('staff-cards').innerHTML = STAFF_VIEWS.filter(([v]) => v !== 'no_company' || comps).map(([view, label, hint, icon, tone, test]) => {
+    const n = all.filter(test).length;
+    const done = PROBLEM_VIEWS.has(view) && !n;
+    return `<button class="scard ${done ? 'tone-green done' : `tone-${tone}`} ${staffView === view ? 'active' : ''}" data-view="${view}" aria-pressed="${staffView === view}">
+      <span class="scard-icon">${done ? ICON.check : icon}</span>
+      <span class="scard-text"><b>${n}</b><span>${esc(label)}</span><small>${done ? 'all done' : esc(hint)}</small></span></button>`;
+  }).join('');
+}
+
+function bankCell(s) {
+  const acc = String(s.bank_account_number || '');
+  if (hasBank(s)) return `<span class="bank-ok">${ICON.check}<span>•• ${esc(acc.slice(-4))}</span></span><div class="sub">${esc(s.bank_ifsc)}</div>`;
+  const what = acc ? 'No IFSC' : s.bank_ifsc ? 'No account no.' : 'Missing';
+  return `<span class="pill miss">${ICON.alert}${what}</span>`;
+}
+
 function renderStaff() {
   const all = staffList();
   if (staffFilter !== 'all' && !savedShifts().some(s => s.id === staffFilter)) staffFilter = 'all';
-  const count = id => all.filter(s => s.shift_id === id).length;
-  $('staff-filter').innerHTML =
-    `<button data-filter="all" class="${staffFilter === 'all' ? 'active' : ''}">All<span class="n">${all.length}</span></button>` +
+  if (!STAFF_VIEWS.some(([v]) => v === staffView)) staffView = 'active';
+  const comps = companyList();
+  if (staffView === 'no_company' && !comps.length) staffView = 'active';
+  renderStaffCards(all);
+
+  const inView = STAFF_VIEWS.find(([v]) => v === staffView)[5];
+  const viewed = all.filter(inView);
+  const count = id => viewed.filter(s => s.shift_id === id).length;
+  $('staff-filter').innerHTML = savedShifts().length < 2 ? '' :
+    `<button data-filter="all" class="${staffFilter === 'all' ? 'active' : ''}">All shifts<span class="n">${viewed.length}</span></button>` +
     savedShifts().map(s => `<button data-filter="${esc(s.id)}" class="${staffFilter === s.id ? 'active' : ''}">${esc(s.name)}<span class="n">${count(s.id)}</span></button>`).join('');
 
-  const comps = companyList();
   if (staffCompanyFilter !== 'all' && staffCompanyFilter !== '' && !settings.companies[staffCompanyFilter]) staffCompanyFilter = 'all';
   $('staff-company-filter').classList.toggle('hidden', !comps.length);
   $('staff-company-filter').innerHTML = `<option value="all">All companies</option>` +
@@ -737,87 +775,94 @@ function renderStaff() {
   bulkCo.innerHTML = companyOptions(comps.some(c => c.id === keepCo) ? keepCo : comps[0]?.id, 'No company');
   bulkCo.classList.toggle('hidden', !comps.length);
   $('btn-bulk-company').classList.toggle('hidden', !comps.length);
-
   const bulk = $('bulk-shift');
   const keep = bulk.value;
   bulk.innerHTML = shiftOptions(savedShifts().some(s => s.id === keep) ? keep : savedShifts()[0].id);
 
   for (const id of [...selected]) if (!settings.staff[id]) selected.delete(id);
-  $('staff-view').value = staffView;
   if ($('staff-search').value.trim() !== staffSearch) $('staff-search').value = staffSearch;
-  const noSalary = s => s.salary === undefined || s.salary === null || s.salary === '';
-  const inView = {
-    active: s => !s.left_on, left: s => Boolean(s.left_on), all: () => true,
-    no_salary: s => !s.left_on && noSalary(s), no_bank: s => !s.left_on && !hasBank(s), no_company: s => !s.left_on && !s.company_id,
-  }[staffView] || (() => true);
-  const rows = all.filter(s => inView(s) && matches(staffSearch, s.name, s.id) && (staffFilter === 'all' || s.shift_id === staffFilter)
+  const rows = viewed.filter(s => matches(staffSearch, s.name, s.id, s.device_id) && (staffFilter === 'all' || s.shift_id === staffFilter)
     && (staffCompanyFilter === 'all' || (s.company_id || '') === staffCompanyFilter));
+  staffRows = rows.map(s => s.id);
   $('staff-toolbar').classList.toggle('hidden', all.length === 0);
+  $('staff-cards').classList.toggle('hidden', all.length === 0);
+  $('staff-shown').textContent = rows.length === viewed.length ? '' : `Showing ${rows.length} of ${viewed.length}`;
 
-  $('staff-empty').textContent = all.length ? 'No staff match.' : 'Upload an attendance sheet on the Salary page to list your staff here.';
+  $('staff-empty').textContent = !all.length ? 'Upload an attendance sheet on the Salary page to list your staff here.'
+    : PROBLEM_VIEWS.has(staffView) && !viewed.length ? 'Nothing missing here — all current staff are set up.' : 'No staff match.';
   $('staff-empty').classList.toggle('hidden', rows.length > 0);
+  $('staff-table').classList.toggle('hidden', rows.length === 0);
   $('staff-table').tBodies[0].innerHTML = rows.map(s => {
     const e = reportEmployee(s.id);
-    const monthly = s.salary ?? '';
     const r = rulesFor(s.company_id);
-    const rate = (monthly === '' ? Number(r.monthly_salary) : Number(monthly)) / (Number(r.salary_divisor) || 30.5);
-    return `<tr data-id="${esc(s.id)}" class="${selected.has(s.id) ? 'selected' : ''} ${s.left_on ? 'has-left' : ''}">
+    const monthly = noSalary(s) ? Number(r.monthly_salary) : Number(s.salary);
+    const company = settings.companies[s.company_id];
+    const shift = shiftById(s.shift_id);
+    const tag = s.left_on ? `<span class="left-tag">left ${esc(fmtDate(s.left_on))}</span>` : s.inSheet ? '' : '<span class="dim">not in this month</span>';
+    return `<tr data-id="${esc(s.id)}" class="staff-row ${selected.has(s.id) ? 'selected' : ''} ${s.left_on ? 'has-left' : ''} ${drawerId === s.id ? 'current' : ''}" tabindex="0">
       <td class="check"><input type="checkbox" class="pick" ${selected.has(s.id) ? 'checked' : ''} aria-label="Select ${esc(s.name)}"></td>
       <td><div class="person">${avatar(s.name)}
-        <div><button class="name link-name" data-profile="${esc(s.id)}" title="Open ${esc(s.name)}'s profile">${esc(s.name || 'Unnamed')}</button><div class="id">#${esc(s.id)}${s.left_on ? ` · <span class="left-tag">left ${esc(fmtDate(s.left_on))}</span>` : s.inSheet ? '' : ' · not in current sheet'}</div></div></div></td>
-      <td><select class="input" data-field="company_id" data-key="staff:${esc(s.id)}:company" aria-label="Company">${companyOptions(s.company_id, comps.length ? '— None —' : 'Add on Companies page')}</select></td>
-      <td><select class="input" data-field="shift_id" data-key="staff:${esc(s.id)}:shift" aria-label="Shift">${shiftOptions(s.shift_id)}</select></td>
-      <td class="num"><input class="input amount" data-field="salary" data-key="staff:${esc(s.id)}:salary" type="number" min="0" step="1"
-        value="${esc(monthly)}" placeholder="${esc(r.monthly_salary)}" title="Leave blank to use the default monthly salary" aria-label="Monthly salary for ${esc(s.name)}"></td>
-      <td class="num rate-cell">${inr2.format(rate)}</td>
-      <td><input class="input bank-name" data-field="bank_account_name" data-key="staff:${esc(s.id)}:bank_name" value="${esc(s.bank_account_name || '')}"
-        placeholder="${esc(s.name || '')}" aria-label="Account holder name for ${esc(s.name)}"></td>
-      <td><input class="input bank-acc" data-field="bank_account_number" data-key="staff:${esc(s.id)}:bank_acc" value="${esc(s.bank_account_number || '')}"
-        inputmode="numeric" placeholder="Account number" aria-label="Account number for ${esc(s.name)}"></td>
-      <td><input class="input bank-ifsc" data-field="bank_ifsc" data-key="staff:${esc(s.id)}:bank_ifsc" value="${esc(s.bank_ifsc || '')}"
-        maxlength="11" placeholder="IFSC" aria-label="IFSC for ${esc(s.name)}"></td>
-      <td><input class="input left-date" data-field="left_on" data-key="staff:${esc(s.id)}:left" type="date" value="${esc(s.left_on || '')}" aria-label="Date ${esc(s.name)} left"></td>
-      <td class="num">${e ? `<b>${money(e.net_salary)}</b>` : '<span class="dim">–</span>'}</td>
+        <div><div class="name">${esc(s.name || 'Unnamed')}</div><div class="id">#${esc(s.id)}${tag ? ` · ${tag}` : ''}</div></div></div></td>
+      <td class="col-company">${company ? `<span class="pill company">${esc(company.name)}</span>` : comps.length ? '<span class="pill miss">No company</span>' : '<span class="dim">–</span>'}</td>
+      <td class="col-shift"><div class="shift-cell"><b>${esc(shift.name)}</b><div class="sub">${esc(shift.login_time)}–${esc(shift.logout_time)}</div></div></td>
+      <td class="num"><b>${money(monthly)}</b><div class="sub">${noSalary(s) ? '<span class="default-note">default</span>' : `${inr.format(monthly / (Number(r.salary_divisor) || 30.5))}/day`}</div></td>
+      <td class="col-bank">${bankCell(s)}</td>
+      <td class="num col-net">${e ? `<b>${money(e.net_salary)}</b>${e.paid_on ? '<div class="sub pos">paid</div>' : ''}` : '<span class="dim">–</span>'}</td>
+      <td class="go">${ICON.chev}</td>
     </tr>`;
   }).join('');
   updateSelection();
+  if (drawerId) { renderDrawer(); loadDrawerHistory(); }
 }
 
 function updateSelection() {
   $('selected-count').textContent = `${selected.size} selected`;
-  $('btn-bulk-shift').disabled = selected.size === 0;
-  $('btn-bulk-company').disabled = selected.size === 0;
+  $('staff-bulk').classList.toggle('hidden', selected.size === 0);
+  document.body.classList.toggle('has-bulk', selected.size > 0);
   const boxes = [...document.querySelectorAll('#staff-table .pick')];
   const checkAll = $('check-all');
   checkAll.checked = boxes.length > 0 && boxes.every(b => b.checked);
   checkAll.indeterminate = !checkAll.checked && boxes.some(b => b.checked);
 }
 
+$('staff-cards').addEventListener('click', e => {
+  const b = e.target.closest('[data-view]');
+  if (!b) return;
+  staffView = b.dataset.view;
+  renderStaff();
+});
 $('staff-filter').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
   staffFilter = b.dataset.filter;
   renderStaff();
 });
-
-// Live daily-rate preview while typing a monthly salary.
-$('staff-table').addEventListener('input', e => {
-  if (e.target.dataset.field !== 'salary') return;
-  const v = e.target.value.trim();
-  const r = rulesFor(settings.staff[e.target.closest('tr').dataset.id]?.company_id);
-  const monthly = v === '' ? Number(r.monthly_salary) : Number(v);
-  e.target.closest('tr').querySelector('.rate-cell').textContent = Number.isFinite(monthly) ? inr2.format(monthly / (Number(r.salary_divisor) || 30.5)) : '–';
-});
-
-$('staff-table').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.matches('input.input')) e.target.blur();
-});
 $('staff-company-filter').addEventListener('change', e => { staffCompanyFilter = e.target.value; renderStaff(); });
-$('staff-view').addEventListener('change', e => { staffView = e.target.value; renderStaff(); });
 $('staff-search').addEventListener('input', e => { staffSearch = e.target.value.trim(); renderStaff(); });
+
 $('staff-table').addEventListener('click', e => {
-  const b = e.target.closest('[data-profile]');
-  if (b) openProfile(b.dataset.profile);
+  if (e.target.closest('.check')) return;
+  const tr = e.target.closest('tr[data-id]');
+  if (tr) openStaff(tr.dataset.id);
+});
+$('staff-table').addEventListener('keydown', e => {
+  const tr = e.target.closest?.('tr[data-id]');
+  if (tr && e.target === tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openStaff(tr.dataset.id); }
+});
+$('staff-table').addEventListener('change', e => {
+  if (e.target.id === 'check-all') {
+    document.querySelectorAll('#staff-table tbody tr[data-id]').forEach(row => {
+      e.target.checked ? selected.add(row.dataset.id) : selected.delete(row.dataset.id);
+      row.classList.toggle('selected', e.target.checked);
+      row.querySelector('.pick').checked = e.target.checked;
+    });
+    return updateSelection();
+  }
+  if (!e.target.classList.contains('pick')) return;
+  const tr = e.target.closest('tr[data-id]');
+  e.target.checked ? selected.add(tr.dataset.id) : selected.delete(tr.dataset.id);
+  tr.classList.toggle('selected', e.target.checked);
+  updateSelection();
 });
 
 // Import an edited staff Excel sheet; the reply says what changed and which rows were refused.
@@ -846,52 +891,180 @@ $('staff-import').addEventListener('change', async e => {
   } catch (err) { toast(err.message, true); }
 });
 
-$('staff-table').addEventListener('change', e => {
-  if (e.target.id === 'check-all') {
-    document.querySelectorAll('#staff-table tbody tr[data-id]').forEach(row => {
-      e.target.checked ? selected.add(row.dataset.id) : selected.delete(row.dataset.id);
-      row.classList.toggle('selected', e.target.checked);
-      row.querySelector('.pick').checked = e.target.checked;
-    });
-    return updateSelection();
-  }
-  const tr = e.target.closest('tr[data-id]');
-  if (!tr) return;
-  const id = tr.dataset.id;
-  if (e.target.classList.contains('pick')) {
-    e.target.checked ? selected.add(id) : selected.delete(id);
-    tr.classList.toggle('selected', e.target.checked);
-    return updateSelection();
-  }
-  const field = e.target.dataset.field;
-  if (field === 'salary') {
-    const v = e.target.value.trim();
-    saveSettings({ staff: { [id]: { salary: v === '' ? null : v } } });
-  } else if (field === 'shift_id' || field === 'company_id') {
-    saveSettings({ staff: { [id]: { [field]: e.target.value } } });
-  } else if (field?.startsWith('bank_')) {
-    saveSettings({ staff: { [id]: { [field]: e.target.value } } });
-  } else if (field === 'left_on') {
-    const name = settings.staff[id]?.name || id;
-    saveSettings({ label: e.target.value ? `${name} left` : `${name} back`, staff: { [id]: { left_on: e.target.value } } },
-      e.target.value ? `${name} marked as left on ${fmtDate(e.target.value)}` : `${name} is current staff again`);
-  }
-});
-
 $('btn-bulk-shift').addEventListener('click', async () => {
   const shift_id = $('bulk-shift').value;
   const staff = Object.fromEntries([...selected].map(id => [id, { shift_id }]));
   const n = selected.size;
   selected.clear();
-  if (await saveSettings({ staff })) toast(`Moved ${n} staff to ${shiftById(shift_id).name}`);
+  if (await saveSettings({ staff })) toast(`Moved ${n} staff to ${shiftById(shift_id).name}`, { undo: true });
 });
-
 $('btn-bulk-company').addEventListener('click', async () => {
   const company_id = $('bulk-company').value;
   const staff = Object.fromEntries([...selected].map(id => [id, { company_id }]));
   const n = selected.size;
   selected.clear();
-  if (await saveSettings({ staff })) toast(`${n} staff set to ${settings.companies[company_id]?.name || 'no company'}`);
+  if (await saveSettings({ staff })) toast(`${n} staff set to ${settings.companies[company_id]?.name || 'no company'}`, { undo: true });
+});
+$('btn-bulk-clear').addEventListener('click', () => { selected.clear(); renderStaff(); });
+
+// ---------- Employee panel ----------
+// Opens from the Staff list, Salary page and Reports. Edits save on change like the rest of the app.
+let drawerId = null;
+let drawerIdx = -1;   // the person's place in the list, kept when a fix drops them out of a "missing" view
+// Opening from a "missing" view puts the cursor straight into the missing field.
+const VIEW_FOCUS = { no_salary: 'salary', no_bank: 'bank_account_number', no_company: 'company_id' };
+
+function openStaff(id, focusField = setTab.current === 'staff' ? VIEW_FOCUS[staffView] : '') {
+  if (!settings.staff[id]) return;
+  const switching = drawerId !== id;
+  drawerId = id;
+  drawerIdx = staffRows.indexOf(id);
+  if (switching) $('drawer-history').innerHTML = '';
+  $('staff-drawer').classList.remove('hidden');
+  $('drawer-scrim').classList.remove('hidden');
+  document.querySelectorAll('#staff-table tr[data-id]').forEach(tr => tr.classList.toggle('current', tr.dataset.id === id));
+  renderDrawer();
+  loadDrawerHistory();
+  const el = focusField && $('drawer-body').querySelector(`[data-field="${focusField}"]`);
+  (el || $('drawer-body').querySelector('[data-close-drawer]')).focus();
+  $('staff-drawer').scrollTop = 0;
+}
+const openProfile = id => openStaff(id, '');
+
+function closeStaff() {
+  const id = drawerId;
+  drawerId = null;
+  $('staff-drawer').classList.add('hidden');
+  $('drawer-scrim').classList.add('hidden');
+  const tr = document.querySelector(`#staff-table tr[data-id="${CSS.escape(id || '')}"]`);
+  tr?.classList.remove('current');
+  if (setTab.current === 'staff') tr?.focus();
+}
+
+function stepStaff(dir) {
+  const i = staffRows.indexOf(drawerId);
+  // Someone who dropped out of the list (just fixed) sits between drawerIdx - 1 and drawerIdx.
+  const next = i >= 0 ? staffRows[i + dir] : drawerIdx >= 0 ? staffRows[dir > 0 ? drawerIdx : drawerIdx - 1] : undefined;
+  if (next) {
+    const field = document.activeElement?.closest?.('#drawer-body') ? document.activeElement.dataset.field : '';
+    openStaff(next, field || undefined);
+    document.querySelector(`#staff-table tr[data-id="${CSS.escape(next)}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function renderDrawer() {
+  const id = drawerId;
+  const s = settings.staff[id];
+  if (!s) return closeStaff();
+  const r = rulesFor(s.company_id);
+  const div = Number(r.salary_divisor) || 30.5;
+  const monthly = noSalary(s) ? Number(r.monthly_salary) : Number(s.salary);
+  const e = reportEmployee(id);
+  const i = staffRows.indexOf(id);
+  const gone = i < 0 && drawerIdx >= 0;   // fixed and no longer in this view
+  const hasPrev = i > 0 || (gone && drawerIdx > 0);
+  const hasNext = (i >= 0 && i < staffRows.length - 1) || (gone && drawerIdx < staffRows.length);
+  const comps = companyList();
+  $('drawer-body').innerHTML = `
+    <div class="drawer-head">${avatar(s.name)}
+      <div class="drawer-title"><h2>${esc(s.name || 'Unnamed')}</h2>
+        <div class="hint">#${esc(id)}${s.device_id && s.device_id !== id ? ` · device ID ${esc(s.device_id)}` : ''}${s.left_on ? ` · <span class="left-tag">left ${esc(fmtDate(s.left_on))}</span>` : ''}</div></div>
+      ${i >= 0 || gone ? `<span class="drawer-pos ${gone ? 'pos' : ''}">${gone ? '✓ done' : `${i + 1} / ${staffRows.length}`}</span>
+      <button class="icon-btn" data-step="-1" ${hasPrev ? '' : 'disabled'} aria-label="Previous person" title="Previous (↑)"><svg viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg></button>
+      <button class="icon-btn" data-step="1" ${hasNext ? '' : 'disabled'} aria-label="Next person" title="Next (↓)"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>` : ''}
+      <button class="icon-btn" data-close-drawer aria-label="Close" title="Close (Esc)">${ICON.x}</button>
+    </div>
+    ${e ? `<div class="drawer-net">
+      <div><span>Net · ${esc(fullMonth(report.month))}</span><b>${money(e.net_salary)}</b>${e.paid_on ? `<span class="pill good">✓ paid ${esc(fmtDate(e.paid_on))}</span>` : ''}</div>
+      <div class="drawer-mini"><span><b>${e.present_days}</b> worked</span><span><b>${e.absences}</b> absent</span><span><b>${e.late_arrivals}</b> late</span></div>
+      <a class="btn sm" href="${staffDownloadUrl(id)}?inline=1" target="_blank" rel="noopener">${ICON.print} Slip</a></div>` : ''}
+    <form class="drawer-form" autocomplete="off">
+      <section class="dsec">
+        <h3><span class="dsec-icon tone-violet">${ICON.building}</span>Work</h3>
+        <div class="dgrid">
+          <label>Company<select class="input" data-field="company_id" data-key="drawer:company">${companyOptions(s.company_id, comps.length ? '— None —' : 'Add on Companies page')}</select></label>
+          <label>Shift<select class="input" data-field="shift_id" data-key="drawer:shift">${shiftOptions(s.shift_id)}</select></label>
+          <label class="wide">Monthly salary
+            <div class="money-input"><span>₹</span><input class="input" data-field="salary" data-key="drawer:salary" type="number" min="0" step="1" inputmode="numeric"
+              value="${esc(s.salary ?? '')}" placeholder="${esc(r.monthly_salary)} (default)"><em id="drawer-rate">${inr2.format(monthly / div)} / day</em></div>
+            <span class="hint">Leave blank to use the default ${money(r.monthly_salary)}${s.company_id && settings.companies[s.company_id]?.rules ? ` (${esc(settings.companies[s.company_id].name)} rules)` : ''}. Daily rate = monthly ÷ ${div}.</span></label>
+        </div>
+      </section>
+      <section class="dsec">
+        <h3><span class="dsec-icon tone-blue">${ICON.bank}</span>Bank account<span class="hint">used for the bank transfer sheet</span></h3>
+        <div class="dgrid">
+          <label class="wide">Account holder<input class="input" data-field="bank_account_name" data-key="drawer:bank_name" value="${esc(s.bank_account_name || '')}" placeholder="Same as employee name"></label>
+          <label>Account number<input class="input mono" data-field="bank_account_number" data-key="drawer:bank_acc" value="${esc(s.bank_account_number || '')}" inputmode="numeric" placeholder="e.g. 50100123456789"></label>
+          <label>IFSC<input class="input mono" data-field="bank_ifsc" data-key="drawer:bank_ifsc" value="${esc(s.bank_ifsc || '')}" maxlength="11" placeholder="e.g. HDFC0001234"></label>
+        </div>
+      </section>
+      <section class="dsec">
+        <h3><span class="dsec-icon tone-slate">${ICON.clock}</span>Employment</h3>
+        <label>Left on<input class="input" data-field="left_on" data-key="drawer:left" type="date" value="${esc(s.left_on || '')}">
+          <span class="hint">Leave blank while they work here. People who left move to the Left list.</span></label>
+      </section>
+    </form>`;
+}
+
+async function loadDrawerHistory() {
+  const id = drawerId;
+  let p;
+  try { p = await api(`/api/staff/${encodeURIComponent(id)}/profile`); } catch { return; }
+  if (id !== drawerId) return;
+  const hist = p.history;
+  const max = Math.max(1, ...hist.map(h => h.net));
+  $('drawer-history').innerHTML = `
+    <section class="dsec">
+      <h3><span class="dsec-icon tone-green">${ICON.wallet}</span>Month by month</h3>
+      ${hist.length ? `<ul class="hist-list">${hist.map(h => `<li>
+        <div class="hist-top"><b>${esc(fullMonth(h.month))}${h.locked ? ' 🔒' : ''}</b>
+          ${h.paid_on ? `<span class="pill good">✓ paid</span>` : ''}<span class="spacer"></span><b>${money(h.net)}</b></div>
+        <div class="hist-bar"><i style="width:${Math.round((h.net / max) * 100)}%"></i></div>
+        <div class="hist-meta">${h.present} worked${h.leave_days ? ` +${h.leave_days} leave` : ''} · ${h.absences} absent · ${h.late} late${h.overtime_minutes ? ` · ${fmtHours(h.overtime_minutes)} OT` : ''}${h.extra ? ` · <span class="${h.extra > 0 ? 'pos' : 'neg'}">${signed(h.extra)}</span>` : ''}</div>
+      </li>`).join('')}</ul>` : '<p class="hint">Not in any saved month yet.</p>'}
+    </section>
+    <section class="dsec">
+      <h3><span class="dsec-icon tone-amber">${ICON.rupee}</span>Advances</h3>
+      ${p.advances.length ? `<ul class="adv-mini">${p.advances.map(a => `<li><span><b>${money(a.amount)}</b> given ${esc(fmtDate(a.date))}${a.note ? ` · ${esc(a.note)}` : ''}</span>
+        <span class="${a.balance ? '' : 'pos'}">${a.balance ? `${money(a.balance)} left · ${money(a.installment)}/month` : 'repaid'}</span></li>`).join('')}</ul>` : '<p class="hint">No advances.</p>'}
+    </section>`;
+}
+
+$('drawer-body').addEventListener('click', e => {
+  if (e.target.closest('[data-close-drawer]')) return closeStaff();
+  const step = e.target.closest('[data-step]');
+  if (step) stepStaff(Number(step.dataset.step));
+});
+$('drawer-scrim').addEventListener('click', closeStaff);
+$('drawer-body').addEventListener('submit', e => e.preventDefault());
+$('drawer-body').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('input.input')) { e.preventDefault(); e.target.blur(); }
+});
+// Live daily-rate preview while typing a monthly salary.
+$('drawer-body').addEventListener('input', e => {
+  if (e.target.dataset.field !== 'salary') return;
+  const r = rulesFor(settings.staff[drawerId]?.company_id);
+  const v = e.target.value.trim();
+  const monthly = v === '' ? Number(r.monthly_salary) : Number(v);
+  $('drawer-rate').textContent = Number.isFinite(monthly) ? `${inr2.format(monthly / (Number(r.salary_divisor) || 30.5))} / day` : '';
+});
+$('drawer-body').addEventListener('change', e => {
+  const field = e.target.dataset.field;
+  const id = drawerId;
+  if (!field || !id) return;
+  const name = settings.staff[id]?.name || id;
+  const v = e.target.value.trim();
+  if (field === 'salary') saveSettings({ staff: { [id]: { salary: v === '' ? null : v } } }, v === '' ? `${name}: default salary` : `${name}: salary ${money(v)}`);
+  else if (field === 'left_on') {
+    saveSettings({ label: v ? `${name} left` : `${name} back`, staff: { [id]: { left_on: v } } },
+      v ? `${name} marked as left on ${fmtDate(v)}` : `${name} is current staff again`);
+  } else saveSettings({ staff: { [id]: { [field]: e.target.value } } });
+});
+document.addEventListener('keydown', e => {
+  if (!drawerId || !$('modal').classList.contains('hidden') || !$('lock-screen').classList.contains('hidden')) return;
+  if (e.key === 'Escape') return closeStaff();
+  if (e.target.matches?.('input, select, textarea')) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); stepStaff(e.key === 'ArrowDown' ? 1 : -1); }
 });
 
 // ---------- Companies page ----------
@@ -1400,48 +1573,6 @@ $('btn-save-slips').addEventListener('click', async () => {
     api('/api/folders/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'month' }) }).catch(() => {});
   } catch (err) { toast(err.message, true); } finally { b.disabled = false; }
 });
-
-// ---------- Employee profile ----------
-async function openProfile(id) {
-  let p;
-  try { p = await api(`/api/staff/${encodeURIComponent(id)}/profile`); } catch (err) { return toast(err.message, true); }
-  const s = p.staff;
-  const r = rulesFor(s.company_id);
-  const monthly = s.salary ?? r.monthly_salary;
-  const hist = p.history;
-  const max = Math.max(1, ...hist.map(h => h.net));
-  const avg = hist.length ? Math.round(hist.reduce((a, h) => a + h.net, 0) / hist.length) : 0;
-  openModal(`<div class="profile-head">${avatar(s.name)}
-      <div><h2>${esc(s.name || 'Unnamed')}</h2>
-        <div class="hint">#${esc(p.id)}${s.device_id ? ` · device ID ${esc(s.device_id)}` : ''}${s.left_on ? ` · <span class="left-tag">left ${esc(fmtDate(s.left_on))}</span>` : ''}</div></div>
-      <button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
-    <div class="profile-facts">
-      <div><span>Company</span><b>${esc(p.company || '—')}</b></div>
-      <div><span>Shift</span><b>${esc(p.shift ? `${p.shift.name} (${p.shift.login_time}–${p.shift.logout_time})` : '—')}</b></div>
-      <div><span>Monthly salary</span><b>${money(monthly)}${s.salary == null ? ' <span class="default-note">default</span>' : ''}</b></div>
-      <div><span>Bank</span><b>${s.bank_account_number ? `${esc(s.bank_account_number)} · ${esc(s.bank_ifsc || 'no IFSC')}` : '—'}</b></div>
-      <div><span>Average net (${hist.length} month${hist.length === 1 ? '' : 's'})</span><b>${money(avg)}</b></div>
-    </div>
-    <div class="group-title">Month by month</div>
-    ${hist.length ? `<div class="table-wrap"><table class="table compact"><thead><tr><th>Month</th><th class="num">Worked</th><th class="num">Absent</th>
-      <th class="num">Late</th><th class="num">Overtime</th><th class="num">Adjust.</th><th>Net</th><th>Paid</th></tr></thead><tbody>
-      ${hist.map(h => `<tr><td>${esc(fullMonth(h.month))}${h.locked ? ' 🔒' : ''}</td><td class="num">${h.present}${h.leave_days ? ` <span class="leave-note">+${h.leave_days}L</span>` : ''}</td>
-        <td class="num">${h.absences}</td><td class="num">${h.late}</td><td class="num">${h.overtime_minutes ? fmtHours(h.overtime_minutes) : '–'}</td>
-        <td class="num ${h.extra > 0 ? 'pos' : h.extra < 0 ? 'neg' : 'dim'}">${h.extra ? signed(h.extra) : '–'}</td>
-        <td><div class="bar-cell"><i style="width:${Math.round((h.net / max) * 100)}%"></i><b>${money(h.net)}</b></div></td>
-        <td>${h.paid_on ? `<span class="pill good">✓ ${esc(fmtDate(h.paid_on))}</span>` : '<span class="dim">–</span>'}</td></tr>`).join('')}
-      </tbody></table></div>` : '<p class="hint">Not in any saved month yet.</p>'}
-    <div class="group-title">Advances</div>
-    ${p.advances.length ? `<ul class="adv-mini">${p.advances.map(a => `<li><b>${money(a.amount)}</b> given ${esc(fmtDate(a.date))}${a.note ? ` · ${esc(a.note)}` : ''}
-      <span class="${a.balance ? '' : 'pos'}">${a.balance ? `${money(a.balance)} left · ${money(a.installment)}/month` : 'repaid'}</span></li>`).join('')}</ul>` : '<p class="hint">No advances.</p>'}
-    <div class="modal-actions"><button class="btn" data-go-staff>Edit on Staff page</button><span class="spacer"></span><button class="btn primary" data-close>Close</button></div>`, { wide: true });
-  $('modal-box').querySelector('[data-go-staff]').addEventListener('click', () => {
-    closeModal();
-    staffSearch = s.name || p.id; staffView = s.left_on ? 'left' : 'active'; staffFilter = 'all'; staffCompanyFilter = 'all';
-    renderStaff();
-    setTab('staff');
-  });
-}
 
 // ---------- Reports ----------
 let reportsScope = 'month';
