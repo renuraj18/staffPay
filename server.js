@@ -152,7 +152,7 @@ function applyRules(target, patch) {
       target[k] = v;
       continue;
     }
-    if (['weekends_working', 'missing_punch_as_leave', 'overtime_pay'].includes(k)) { target[k] = v === true || Number(v) === 1 ? 1 : 0; continue; }
+    if (['weekends_working', 'missing_punch_as_leave', 'overtime_pay', 'early_leave'].includes(k)) { target[k] = v === true || Number(v) === 1 ? 1 : 0; continue; }
     target[k] = nonNegative(v, k.replace(/_/g, ' '));
     if (['salary_divisor', 'late_hour_block', 'overtime_block_minutes'].includes(k) && target[k] === 0) throw new BadRequest(`${k.replace(/_/g, ' ')} must be more than 0`);
   }
@@ -556,7 +556,7 @@ app.get('/api/staff/:id/profile', (req, res) => {
     if (!e) continue;
     history.push({
       month: m, net: e.net_salary, base: e.base_salary, present: e.present_days, absences: e.absences, half_days: e.half_days,
-      late: e.late_arrivals, overtime_minutes: e.overtime_minutes, leave_days: e.leave_days || 0,
+      late: e.late_arrivals, early: e.early_leaves || 0, overtime_minutes: e.overtime_minutes, leave_days: e.leave_days || 0,
       extra: (e.extra_earnings || 0) - (e.extra_deductions || 0), paid_on: e.paid_on || '',
       locked: Boolean(store.loadMonth(m).locked),
     });

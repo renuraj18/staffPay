@@ -158,7 +158,7 @@
                     <th class="num" data-sort="half_days">Half</th>
                     <th class="num" data-sort="absences" title="Full absences (excess beyond allowance in brackets)">Absent</th>
                     <th class="num" data-sort="off_days">Off</th>
-                    <th class="num" data-sort="late_arrivals">Late</th>
+                    <th class="num" data-sort="late_arrivals" title="Late arrivals · early leaves">Late · Early</th>
                     <th class="num" data-sort="missing_punches" title="Missing Clock In or Clock Out">Missing</th>
                     <th class="num" data-sort="attendance_deduction">Deduction</th>
                     <th class="num" data-sort="total_fines">Fines</th>
@@ -259,7 +259,7 @@
         <header class="page-head">
           <div>
             <h1>Shifts</h1>
-            <p class="sub">Group staff into shift buckets. Clock In after login + grace is late. Early leave is not marked.</p>
+            <p class="sub">Group staff into shift buckets. Clock In after login + grace is late; Clock Out before logout − grace is early leave.</p>
           </div>
           <div class="head-actions">
             <span class="saved" data-saved></span>
@@ -516,13 +516,15 @@
               <span class="hint" id="ot-example"></span></label>
           </div>
           <div class="form-group rule-card">
-            <div class="group-title">Late arrival</div>
+            <div class="group-title">Late arrival &amp; early leave</div>
             <div class="choice">
-              <label><input type="radio" name="late_mode" value="fine"><span>Fine per late day</span></label>
+              <label><input type="radio" name="late_mode" value="fine"><span>Fine per day</span></label>
               <label><input type="radio" name="late_mode" value="hourly"><span>Cut salary by the hour</span></label>
             </div>
-            <label data-show="late_mode=fine">Fine amount (₹ per late day)<input class="input" name="late_fine" data-key="rule:late_fine" type="number" min="0" step="1"></label>
-            <label data-show="late_mode=hourly">Round late time up to (minutes)<input class="input" name="late_hour_block" data-key="rule:late_hour_block" type="number" min="1" step="5">
+            <label class="check-row"><input type="checkbox" name="early_leave" data-key="rule:early_leave">
+              <span>Also charge for leaving early<span class="hint">Clock out before the shift's logout minus its grace minutes (Sunday: before the Sunday finish) is charged the same way as late arrival</span></span></label>
+            <label data-show="late_mode=fine">Fine amount (₹ per late arrival or early leave)<input class="input" name="late_fine" data-key="rule:late_fine" type="number" min="0" step="1"></label>
+            <label data-show="late_mode=hourly">Round late / early time up to (minutes)<input class="input" name="late_hour_block" data-key="rule:late_hour_block" type="number" min="1" step="5">
               <span class="hint" id="late-example"></span></label>
           </div>
           <div class="form-group rule-card">
@@ -535,7 +537,7 @@
             <label data-show="missing_punch_as_leave=0">Fine amount (₹ per missing punch)<input class="input" name="missing_punch_fine" data-key="rule:missing_punch_fine" type="number" min="0" step="1"></label>
           </div>
         </form>
-        <p class="hint rules-foot">Default monthly salary applies to staff with no salary entered. Late arrival is measured from each employee's shift login time (after its grace minutes); hourly rate = daily rate ÷ shift hours. Early leave is not marked.</p>
+        <p class="hint rules-foot">Default monthly salary applies to staff with no salary entered. Late arrival is measured from each employee's shift login time and early leave from its logout time (both after the shift's grace minutes); hourly rate = daily rate ÷ shift hours.</p>
       </section>
     </main>
   </div>

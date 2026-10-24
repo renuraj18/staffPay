@@ -45,11 +45,64 @@ test('Clock In after shift login (+ grace) is late', () => {
   assert.equal(classifyDay(day('09:40', '19:30', 'Late(LT)'), DEFAULT_RULES, { ...DEFAULT_SHIFT, grace_minutes: 10 }).late, 0);
 });
 
-test('early leave is never marked or fined', () => {
-  const d = classifyDay(day('09:00', '15:00', 'Early Leave(EL)'), DEFAULT_RULES, { ...DEFAULT_SHIFT, logout_time: '19:30' });
-  assert.equal(d.category, 'Present');
-  assert.equal(d.early_leave, undefined);
-  assert.equal(d.late_fine + d.missing_fine, 0);
+// Early leave: Clock Out before logout − grace, charged the same way as late arrival.
+const EVE = { ...DEFAULT_SHIFT, login_time: '09:00', logout_time: '19:30', grace_minutes: 0 };
+test('leaving before logout is early leave with the late fine', () => {
+  const d = classifyDay(day('09:00', '19:00', 'Early Leave(EL)'), DEFAULT_RULES, EVE);
+  assert.equal(d.category, 'Early Leave');
+  assert.equal(d.early, 1);
+  assert.equal(d.early_minutes, 30);
+  assert.equal(d.early_fine, DEFAULT_RULES.late_fine);
+  assert.equal(d.late, 0);
+  assert.equal(classifyDay(day('09:00', '19:30', 'Present(P)'), DEFAULT_RULES, EVE).early, 0);
+});
+
+test('early leave uses the shift grace as the cutoff, like late arrival', () => {
+  const shift = { ...EVE, grace_minutes: 10 };
+  assert.equal(classifyDay(day('09:00', '19:20', 'Present(P)'), DEFAULT_RULES, shift).early, 0);
+  const d = classifyDay(day('09:00', '19:19', 'Present(P)'), DEFAULT_RULES, shift);
+  assert.equal(d.early, 1);
+  assert.equal(d.early_minutes, 11); // measured from logout, like late is from login
+});
+
+test('late and early on the same day are both charged', () => {
+  const d = classifyDay(day('09:20', '19:00', 'Present(P)'), DEFAULT_RULES, EVE);
+  assert.equal(d.category, 'Late + Early');
+  assert.equal(d.late_fine + d.early_fine, 2 * DEFAULT_RULES.late_fine);
+});
+
+test('hourly mode cuts early leave time rounded up to the block', () => {
+  const rules = { ...DEFAULT_RULES, late_mode: 'hourly', late_hour_block: 60 };
+  const d = classifyDay(day('09:00', '18:45', 'Present(P)'), rules, EVE);
+  assert.equal(d.early_minutes, 45);
+  assert.equal(d.early_hours, 1);
+  assert.equal(d.early_fine, 0);
+});
+
+test('early leave is not marked when switched off, on half days, or after midnight', () => {
+  assert.equal(classifyDay(day('09:00', '15:00', 'Present(P)'), { ...DEFAULT_RULES, early_leave: 0 }, EVE).early, 0);
+  assert.equal(classifyDay(day('09:00', '14:00', 'Half Day(HD)'), DEFAULT_RULES, EVE).early, 0);
+  assert.equal(classifyDay(day('09:00', '01:00', 'Present(P)'), DEFAULT_RULES, EVE).early, 0);
+});
+
+test('Sunday early leave is judged against the Sunday finish', () => {
+  const sun = (out) => ({ date: '2026-09-06', clock_in: '09:00', clock_out: out, total_wt: '', status: 'Present(P)' });
+  assert.equal(classifyDay(sun('15:00'), DEFAULT_RULES, EVE).early, 0);
+  assert.equal(classifyDay(sun('14:30'), DEFAULT_RULES, EVE).early_minutes, 30);
+});
+
+test('early leave fines reduce net salary and the day still counts as worked', () => {
+  const buf = reportWorkbook([{ id: '1', name: 'A', days: [['01-09-2026', '09:00', '19:00', 'Present(P)'], ['02-09-2026', '09:00', '19:30', 'Present(P)']] }],
+    { from: 'September 01 2026', to: 'September 02 2026' });
+  const settings = { shifts: [EVE], staff: { 1: { salary: 30500 } } };
+  const e = calculatePayroll(parseWorkbook(buf), settings).employees[0];
+  assert.equal(e.early_leaves, 1);
+  assert.equal(e.early_fine, DEFAULT_RULES.late_fine);
+  assert.equal(e.total_fines, e.late_fine + e.early_fine + e.missing_punch_fine);
+  assert.equal(e.present_days, 2);
+  const hourly = calculatePayroll(parseWorkbook(buf), { ...settings, rules: { ...DEFAULT_RULES, late_mode: 'hourly' } }).employees[0];
+  assert.equal(hourly.early_hours, 1);
+  assert.equal(hourly.early_fine, Math.round(hourly.hourly_rate * 1));
 });
 
 test('staff in a different shift bucket are judged against that shift', () => {

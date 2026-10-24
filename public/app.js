@@ -392,7 +392,7 @@ function renderSalary() {
         <td class="num">${e.half_days || '<span class="dim">–</span>'}</td>
         <td class="num">${e.absences}${e.excess_absences && e.excess_absences !== e.absences ? ` <span class="excess">(${e.excess_absences})</span>` : ''}</td>
         <td class="num">${e.off_days}</td>
-        <td class="num">${e.late_arrivals}</td>
+        <td class="num">${e.late_arrivals}${e.early_leaves ? ` <span class="early-note" title="Left early">· ${e.early_leaves}</span>` : ''}</td>
         <td class="num">${e.missing_punches ? `<span class="count-miss">${e.missing_punches}</span>` : '0'}</td>
         <td class="num ${e.attendance_deduction ? 'neg' : 'dim'}">${e.attendance_deduction ? '−' + money(e.attendance_deduction) : '–'}</td>
         <td class="num ${e.total_fines ? 'neg' : 'dim'}">${e.total_fines ? '−' + money(e.total_fines) : '–'}</td>
@@ -413,7 +413,7 @@ function renderSalary() {
       <td>Total · ${inFilter.length} staff</td><td></td><td></td>
       <td class="num">${money(t.base_salary)}</td>
       <td class="num">${t.present_days}</td><td class="num">${t.half_days}</td><td class="num">${t.absences}</td>
-      <td class="num">${t.off_days}</td><td class="num">${t.late_arrivals}</td>
+      <td class="num">${t.off_days}</td><td class="num">${t.late_arrivals}${t.early_leaves ? ` · ${t.early_leaves}` : ''}</td>
       <td class="num">${t.missing_punches}</td>
       <td class="num">${money(t.attendance_deduction)}</td><td class="num">${money(t.total_fines)}</td>
       <td class="num">${money(t.advance_deduction)}</td><td class="num">${money(t.overtime_incentive)}</td>
@@ -428,7 +428,7 @@ function dayClass(d) {
   if (d.absent) return 'c-absent';
   if (d.half) return 'c-half';
   if (d.missing) return 'c-missing';
-  if (d.late) return 'c-late';
+  if (d.late || d.early) return 'c-late';
   return 'c-present';
 }
 
@@ -437,7 +437,7 @@ function detailRow(e) {
   const tiles = e.days.map(d => {
     const [y, m, dd] = d.date.split('-').map(Number);
     const wd = WEEKDAYS[new Date(y, m - 1, dd).getDay()];
-    const flags = [d.late && (d.late_hours ? `LATE −${fmtHours(d.late_hours * 60)}` : 'LATE'), d.missing_in && 'NO IN', d.missing_out && 'NO OUT', d.ot_minutes && `+${fmtHours(d.ot_minutes)}`]
+    const flags = [d.late && (d.late_hours ? `LATE −${fmtHours(d.late_hours * 60)}` : 'LATE'), d.early && (d.early_hours ? `EARLY −${fmtHours(d.early_hours * 60)}` : 'EARLY'), d.missing_in && 'NO IN', d.missing_out && 'NO OUT', d.ot_minutes && `+${fmtHours(d.ot_minutes)}`]
       .filter(Boolean).map(f => `<span class="flag">${f}</span>`).join('');
     const times = d.clock_in || d.clock_out ? `${d.clock_in || '—'} → ${d.clock_out || '—'}` : '&nbsp;';
     const tip = [d.status || 'No status', d.moved && 'single evening punch read as log-off',
@@ -461,6 +461,7 @@ function detailRow(e) {
     e.half_days ? `Half days ${e.half_days}` : '',
     e.attendance_deduction ? `Deduction <b class="neg">−${money(e.attendance_deduction)}</b>` : '',
     e.late_fine ? (e.rules.late_mode === 'hourly' ? `Late ${fmtHours(e.late_hours * 60)} cut −${money(e.late_fine)}` : `Late fines −${money(e.late_fine)}`) : '',
+    e.early_fine ? (e.rules.late_mode === 'hourly' ? `Early leave ${fmtHours(e.early_hours * 60)} cut −${money(e.early_fine)}` : `Early leave fines (${e.early_leaves}) −${money(e.early_fine)}`) : '',
     e.missing_punch_fine ? `Missing punch fines −${money(e.missing_punch_fine)}` : '',
     e.overtime_incentive ? `Overtime ${fmtHours(e.overtime_minutes)} × ${inr2.format(e.overtime_rate)}/h${e.rules.overtime_mode === 'fixed' ? ' <span class="dim">(fixed)</span>' : ''} <b class="pos">+${money(e.overtime_incentive)}</b>` : '',
     ...e.advances.map(a => a.start_month > report.month
@@ -478,7 +479,7 @@ function detailRow(e) {
 
   return `<tr class="detail" data-id="${esc(e.id)}"><td colspan="18"><div class="detail-inner">
     <div class="legend">
-      <span><i class="c-present"></i>Present</span><span><i class="c-late"></i>Late</span>${Number(e.rules.missing_punch_as_leave) ? '' : '<span><i class="c-missing"></i>Missing punch</span>'}
+      <span><i class="c-present"></i>Present</span><span><i class="c-late"></i>Late / early</span>${Number(e.rules.missing_punch_as_leave) ? '' : '<span><i class="c-missing"></i>Missing punch</span>'}
       <span><i class="c-half"></i>Half day</span><span><i class="c-absent"></i>Absent</span><span><i class="c-leave"></i>Paid leave</span><span><i class="c-off"></i>Weekly off / holiday</span>
       ${locked ? '' : '<span class="muted">· Click a day to correct it</span>'}
     </div>
@@ -681,7 +682,7 @@ function updateRuleVisibility() {
   const ot = m => (m >= min ? Math.floor(m / otBlock) * otBlock : 0);
   const at = m => { const t = 20 * 60 + m; return `${Math.floor(t / 60) - 12}:${String(t % 60).padStart(2, '0')}`; };
   $('ot-example').textContent = `Example: logout 8:00 PM — clock out ${[50, 70, 95, 119].map(m => `${at(m)} → ${ot(m) ? fmtHours(ot(m)) : 'none'}`).join(', ')}.`;
-  $('late-example').textContent = `Example: shift starts 9:00, clock in 9:15 → ${fmtHours(cut * 60)} salary cut. Grace minutes of the shift still apply.`;
+  $('late-example').textContent = `Example: shift 9:00–8:00 PM — clock in 9:15 or clock out 7:45 PM → ${fmtHours(cut * 60)} salary cut. Grace minutes of the shift still apply.`;
 }
 
 let rulesTimer;
@@ -976,7 +977,7 @@ function renderDrawer() {
     </div>
     ${e ? `<div class="drawer-net">
       <div><span>Net · ${esc(fullMonth(report.month))}</span><b>${money(e.net_salary)}</b>${e.paid_on ? `<span class="pill good">✓ paid ${esc(fmtDate(e.paid_on))}</span>` : ''}</div>
-      <div class="drawer-mini"><span><b>${e.present_days}</b> worked</span><span><b>${e.absences}</b> absent</span><span><b>${e.late_arrivals}</b> late</span></div>
+      <div class="drawer-mini"><span><b>${e.present_days}</b> worked</span><span><b>${e.absences}</b> absent</span><span><b>${e.late_arrivals}</b> late</span>${e.early_leaves ? `<span><b>${e.early_leaves}</b> early</span>` : ''}</div>
       <a class="btn sm" href="${staffDownloadUrl(id)}?inline=1" target="_blank" rel="noopener">${ICON.print} Slip</a></div>` : ''}
     <form class="drawer-form" autocomplete="off">
       <section class="dsec">
@@ -1020,7 +1021,7 @@ async function loadDrawerHistory() {
         <div class="hist-top"><b>${esc(fullMonth(h.month))}${h.locked ? ' 🔒' : ''}</b>
           ${h.paid_on ? `<span class="pill good">✓ paid</span>` : ''}<span class="spacer"></span><b>${money(h.net)}</b></div>
         <div class="hist-bar"><i style="width:${Math.round((h.net / max) * 100)}%"></i></div>
-        <div class="hist-meta">${h.present} worked${h.leave_days ? ` +${h.leave_days} leave` : ''} · ${h.absences} absent · ${h.late} late${h.overtime_minutes ? ` · ${fmtHours(h.overtime_minutes)} OT` : ''}${h.extra ? ` · <span class="${h.extra > 0 ? 'pos' : 'neg'}">${signed(h.extra)}</span>` : ''}</div>
+        <div class="hist-meta">${h.present} worked${h.leave_days ? ` +${h.leave_days} leave` : ''} · ${h.absences} absent · ${h.late} late${h.early ? ` · ${h.early} early` : ''}${h.overtime_minutes ? ` · ${fmtHours(h.overtime_minutes)} OT` : ''}${h.extra ? ` · <span class="${h.extra > 0 ? 'pos' : 'neg'}">${signed(h.extra)}</span>` : ''}</div>
       </li>`).join('')}</ul>` : '<p class="hint">Not in any saved month yet.</p>'}
     </section>
     <section class="dsec">
@@ -1111,7 +1112,7 @@ function renderCompanies() {
         ${field('ifsc', 'IFSC', 'maxlength="11"')}
       </div>
       <div class="rules-line">
-        <span>${c.rules ? `<b>Own salary rules</b> · late ${c.rules.late_mode === 'hourly' ? 'cut hourly' : `fine ${money(c.rules.late_fine)}`} · missing punch ${Number(c.rules.missing_punch_as_leave) ? 'leave' : `fine ${money(c.rules.missing_punch_fine)}`}` : 'Uses the default salary rules'}</span>
+        <span>${c.rules ? `<b>Own salary rules</b> · late${Number(c.rules.early_leave) ? '/early' : ''} ${c.rules.late_mode === 'hourly' ? 'cut hourly' : `fine ${money(c.rules.late_fine)}`} · missing punch ${Number(c.rules.missing_punch_as_leave) ? 'leave' : `fine ${money(c.rules.missing_punch_fine)}`}` : 'Uses the default salary rules'}</span>
         <button class="btn sm" data-action="rules">Salary rules</button>
       </div>
       <div class="group-title">${ICON.people} Staff</div>
